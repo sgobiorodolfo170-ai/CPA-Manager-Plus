@@ -35,7 +35,7 @@ func New(cfg config.Config, store *store.Store, collector *collector.Manager) *S
 		serviceID,
 	)
 	return &Server{
-		handler: router.NewGin(appCtx),
+		handler: router.New(appCtx),
 	}
 }
 
