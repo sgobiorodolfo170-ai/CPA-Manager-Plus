@@ -247,12 +247,12 @@ textarea {
 
 .notification-container {
   position: fixed;
-  top: $spacing-lg;
+  top: calc(var(--header-height, 50px) + 12px);
   right: $spacing-lg;
   display: flex;
   flex-direction: column;
   gap: $spacing-sm;
-  z-index: $z-notification;
+  z-index: 10050;
   max-width: 360px;
 }
 
