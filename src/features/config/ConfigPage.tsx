@@ -6,8 +6,6 @@ import { parse as parseYaml, parseDocument } from 'yaml';
 import { usePageTransitionLayer } from '@/components/common/PageTransitionLayer';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Select } from '@/components/ui/Select';
-import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
   IconCheck,
   IconChevronDown,
@@ -37,6 +35,7 @@ import {
   type ManagerConfigResponse,
 } from '@/services/api/usageService';
 import { detectApiBaseFromLocation } from '@/utils/connection';
+import { ManagerConfigPanel } from './components/ManagerConfigPanel';
 import styles from './ConfigPage.module.scss';
 
 type ConfigEditorTab = 'visual' | 'source' | 'manager';
@@ -922,191 +921,49 @@ export function ConfigPage() {
           )}
 
           {activeTab === 'manager' ? (
-            <div className={styles.managerConfigPanel}>
-              <div className={styles.managerConfigHeader}>
-                <div>
-                  <h2>{t('config_management.manager.title')}</h2>
-                  <p>
-                    {t('config_management.manager.boundary_hint')}
-                  </p>
-                </div>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void loadManagerConfig()}
-                  loading={managerLoading}
-                >
-                  {t('common.refresh')}
-                </Button>
-              </div>
-
-              <section className={styles.managerSection}>
-                <div className={styles.managerSectionHeader}>
-                  <div>
-                    <h3>{t('config_management.manager.runtime_title')}</h3>
-                    <p>
-                      {panelHostedByUsageService === true
-                        ? t('config_management.manager.runtime_embedded_hint')
-                        : t('config_management.manager.runtime_external_hint')}
-                    </p>
-                  </div>
-                  <span className={styles.managerRuntimeBadge}>{managerRuntimeModeLabel}</span>
-                </div>
-
-                {panelHostedByUsageService === true ? (
-                  <div className={styles.managerReadonlyGrid}>
-                    <div>
-                      <span>{t('config_management.manager.service_base')}</span>
-                      <strong>{detectedPanelBase}</strong>
-                    </div>
-                  </div>
-                ) : (
-                  <Input
-                    label={t('config_management.manager.external_service_base')}
-                    placeholder="http://127.0.0.1:18317"
-                    value={managerServiceBase}
-                    onChange={(event) => {
-                      setManagerServiceBase(event.target.value);
-                      setManagerFieldDirty();
-                    }}
-                    disabled={disableControls || managerLoading}
-                    hint={t('config_management.manager.external_service_hint')}
-                  />
-                )}
-              </section>
-
-              <section className={styles.managerSection}>
-                <div className={styles.managerSectionHeader}>
-                  <div>
-                    <h3>{t('config_management.manager.request_monitoring_title')}</h3>
-                    <p>
-                      {t('config_management.manager.request_monitoring_hint')}
-                    </p>
-                  </div>
-                  <ToggleSwitch
-                    label={t('config_management.manager.request_monitoring_enabled')}
-                    labelPosition="left"
-                    checked={managerRequestMonitoringEnabled}
-                    onChange={(value) => {
-                      setManagerRequestMonitoringEnabled(value);
-                      setManagerFieldDirty();
-                    }}
-                    disabled={disableControls || managerLoading || !canConfigureRequestMonitoring}
-                  />
-                </div>
-
-                {!canConfigureRequestMonitoring ? (
-                  <div className={styles.managerDependencyNote}>
-                    {t('config_management.manager.request_monitoring_dependency')}
-                  </div>
-                ) : null}
-
-                <div className={styles.managerQueueNote}>
-                  {t('config_management.manager.request_monitoring_queue_note')}
-                </div>
-
-                <div className={styles.managerConfigGrid}>
-                  <div className={styles.managerField}>
-                    <span className={styles.managerFieldLabel}>
-                      {t('config_management.manager.collector_mode')}
-                    </span>
-                    <Select
-                      value={managerCollectorMode}
-                      options={managerCollectorModeOptions}
-                      triggerClassName={styles.managerSelectTrigger}
-                      onChange={(value) => {
-                        setManagerCollectorMode(value);
-                        setManagerFieldDirty();
-                      }}
-                      disabled={
-                        disableControls ||
-                        managerLoading ||
-                        !managerRequestMonitoringEnabled ||
-                        !canConfigureRequestMonitoring
-                      }
-                      ariaLabel={t('config_management.manager.collector_mode')}
-                    />
-                  </div>
-                  <Input
-                    label={t('config_management.manager.poll_interval_ms')}
-                    type="number"
-                    min="1"
-                    placeholder="500"
-                    value={managerPollIntervalMs}
-                    onChange={(event) => {
-                      setManagerPollIntervalMs(event.target.value);
-                      setManagerFieldDirty();
-                    }}
-                    disabled={
-                      disableControls ||
-                      managerLoading ||
-                      !managerRequestMonitoringEnabled ||
-                      !canConfigureRequestMonitoring
-                    }
-                    hint={t('config_management.manager.poll_interval_hint', {
-                      seconds: managerRetentionSeconds,
-                    })}
-                  />
-                  <Input
-                    label={t('config_management.manager.batch_size')}
-                    type="number"
-                    min="1"
-                    placeholder="100"
-                    value={managerBatchSize}
-                    onChange={(event) => {
-                      setManagerBatchSize(event.target.value);
-                      setManagerFieldDirty();
-                    }}
-                    disabled={
-                      disableControls ||
-                      managerLoading ||
-                      !managerRequestMonitoringEnabled ||
-                      !canConfigureRequestMonitoring
-                    }
-                  />
-                  <Input
-                    label={t('config_management.manager.query_limit')}
-                    type="number"
-                    min="1"
-                    placeholder="50000"
-                    value={managerQueryLimit}
-                    onChange={(event) => {
-                      setManagerQueryLimit(event.target.value);
-                      setManagerFieldDirty();
-                    }}
-                    disabled={
-                      disableControls ||
-                      managerLoading ||
-                      !managerRequestMonitoringEnabled ||
-                      !canConfigureRequestMonitoring
-                    }
-                  />
-                </div>
-              </section>
-
-              <div className={styles.managerMetaGrid}>
-                <div>
-                  <span>{t('config_management.manager.config_source')}</span>
-                  <strong>{managerConfigSourceLabel}</strong>
-                </div>
-                <div>
-                  <span>{t('config_management.manager.cpa_usage_enabled')}</span>
-                  <strong>
-                    {managerCPAUsage?.usageStatisticsEnabled
-                      ? t('common.enabled')
-                      : t('common.disabled')}
-                  </strong>
-                </div>
-                <div>
-                  <span>{t('config_management.manager.cpa_retention')}</span>
-                  <strong>
-                    {t('config_management.manager.cpa_retention_value', {
-                      seconds: managerRetentionSeconds,
-                    })}
-                  </strong>
-                </div>
-              </div>
-            </div>
+            <ManagerConfigPanel
+              managerLoading={managerLoading}
+              panelHostedByUsageService={panelHostedByUsageService}
+              detectedPanelBase={detectedPanelBase}
+              managerRuntimeModeLabel={managerRuntimeModeLabel}
+              managerServiceBase={managerServiceBase}
+              disableControls={disableControls}
+              canConfigureRequestMonitoring={canConfigureRequestMonitoring}
+              managerRequestMonitoringEnabled={managerRequestMonitoringEnabled}
+              managerCollectorMode={managerCollectorMode}
+              managerCollectorModeOptions={managerCollectorModeOptions}
+              managerPollIntervalMs={managerPollIntervalMs}
+              managerBatchSize={managerBatchSize}
+              managerQueryLimit={managerQueryLimit}
+              managerRetentionSeconds={managerRetentionSeconds}
+              managerConfigSourceLabel={managerConfigSourceLabel}
+              managerUsageStatisticsEnabled={Boolean(managerCPAUsage?.usageStatisticsEnabled)}
+              onRefresh={() => void loadManagerConfig()}
+              onManagerServiceBaseChange={(value) => {
+                setManagerServiceBase(value);
+                setManagerFieldDirty();
+              }}
+              onRequestMonitoringChange={(value) => {
+                setManagerRequestMonitoringEnabled(value);
+                setManagerFieldDirty();
+              }}
+              onCollectorModeChange={(value) => {
+                setManagerCollectorMode(value);
+                setManagerFieldDirty();
+              }}
+              onPollIntervalMsChange={(value) => {
+                setManagerPollIntervalMs(value);
+                setManagerFieldDirty();
+              }}
+              onBatchSizeChange={(value) => {
+                setManagerBatchSize(value);
+                setManagerFieldDirty();
+              }}
+              onQueryLimitChange={(value) => {
+                setManagerQueryLimit(value);
+                setManagerFieldDirty();
+              }}
+            />
           ) : activeTab === 'visual' ? (
             <VisualConfigEditor
               values={visualValues}
