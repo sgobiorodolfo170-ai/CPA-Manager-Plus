@@ -73,6 +73,10 @@ export const buildEventRows = (
       const endpoint = readString(detail.__endpoint) || '-';
       const endpointMethod = readString(detail.__endpointMethod) || '-';
       const endpointPath = readString(detail.__endpointPath) || endpoint;
+      const resolvedModel = readString(detail.__resolvedModel);
+      const projectId = readString(
+        detail.auth_project_id_snapshot ?? detail.authProjectIdSnapshot
+      );
       const inputTokens = Math.max(Number(detail.tokens?.input_tokens) || 0, 0);
       const outputTokens = Math.max(Number(detail.tokens?.output_tokens) || 0, 0);
       const reasoningTokens = Math.max(Number(detail.tokens?.reasoning_tokens) || 0, 0);
@@ -98,6 +102,7 @@ export const buildEventRows = (
         dayKey,
         hourLabel,
         model: readString(detail.__modelName) || '-',
+        resolvedModel: resolvedModel || undefined,
         endpoint,
         endpointMethod,
         endpointPath,
@@ -109,6 +114,7 @@ export const buildEventRows = (
         authIndex,
         authIndexMasked: maskAuthIndex(authIndex),
         authLabel: authMeta?.label || snapshotLabel || sourceMasked,
+        projectId,
         apiKeyHash,
         apiKeyLabel,
         apiKeyMasked,
@@ -141,7 +147,9 @@ export const buildEventRows = (
           endpointPath,
           endpointMethod,
           authMeta?.provider || snapshotProvider,
-          authMeta?.planType
+          authMeta?.planType,
+          resolvedModel,
+          projectId
         ),
       } satisfies MonitoringEventRow;
     })

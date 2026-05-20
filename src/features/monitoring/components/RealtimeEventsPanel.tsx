@@ -120,6 +120,10 @@ export function RealtimeEventsPanel({
           <tbody>
             {pagination.pageItems.map((row) => {
               const sourceDisplay = buildRealtimeSourceDisplay(row, t);
+              const showResolvedModel =
+                row.resolvedModel &&
+                row.resolvedModel.trim() &&
+                row.resolvedModel.trim() !== row.model;
               return (
                 <tr key={row.id} className={row.failed ? styles.logRowFailed : undefined}>
                   <td>
@@ -142,6 +146,11 @@ export function RealtimeEventsPanel({
                   <td>
                     <div className={styles.primaryCell}>
                       <span className={styles.monoCell}>{row.model}</span>
+                      {showResolvedModel ? (
+                        <small className={styles.monoCell}>
+                          {t('monitoring.resolved_model_label', { model: row.resolvedModel })}
+                        </small>
+                      ) : null}
                       <small className={styles.monoCell}>{buildRealtimeMetaText(row)}</small>
                     </div>
                   </td>

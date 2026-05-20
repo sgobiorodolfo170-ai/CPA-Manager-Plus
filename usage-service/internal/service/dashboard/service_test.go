@@ -131,6 +131,53 @@ func TestSummaryAggregatesCostsAndWindows(t *testing.T) {
 	}
 }
 
+func TestSummaryUsesResolvedModelPricing(t *testing.T) {
+	db := newDashboardTestStore(t)
+	ctx := context.Background()
+	todayStart := int64(1_778_000_000_000)
+	nowMS := todayStart + 60*60*1000
+
+	if err := db.SaveModelPrices(ctx, map[string]store.ModelPrice{
+		"gpt-resolved-a": {Prompt: 1},
+		"gpt-resolved-b": {Completion: 2},
+	}); err != nil {
+		t.Fatalf("save prices: %v", err)
+	}
+	first := dashboardEvent("dashboard-resolved-a", todayStart+1_000, "alias-fast", false, 1_000_000, 0, 0, 0, 0, 1_000_000, nil)
+	first.ResolvedModel = "gpt-resolved-a"
+	second := dashboardEvent("dashboard-resolved-b", todayStart+2_000, "alias-fast", false, 0, 1_000_000, 0, 0, 0, 1_000_000, nil)
+	second.ResolvedModel = "gpt-resolved-b"
+	if _, err := db.InsertEvents(ctx, []usage.Event{first, second}); err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	resp, err := New(db).Summary(ctx, SummaryParams{
+		TodayStartMS:   todayStart,
+		NowMS:          nowMS,
+		TopModels:      5,
+		RecentFailures: 1,
+	})
+	if err != nil {
+		t.Fatalf("summary: %v", err)
+	}
+
+	if math.Abs(resp.Today.TotalCost-3) > 0.000001 {
+		t.Fatalf("today cost = %v", resp.Today.TotalCost)
+	}
+	if len(resp.TopModelsToday) != 1 || resp.TopModelsToday[0].Model != "alias-fast" ||
+		resp.TopModelsToday[0].Calls != 2 || math.Abs(resp.TopModelsToday[0].Cost-3) > 0.000001 {
+		t.Fatalf("top models = %#v", resp.TopModelsToday)
+	}
+	if len(resp.ModelCostRank) != 1 || resp.ModelCostRank[0].Model != "alias-fast" ||
+		math.Abs(resp.ModelCostRank[0].Cost-3) > 0.000001 {
+		t.Fatalf("model cost rank = %#v", resp.ModelCostRank)
+	}
+	if len(resp.ChannelHealth) != 1 || resp.ChannelHealth[0].AuthIndex != "auth-1" ||
+		math.Abs(resp.ChannelHealth[0].Cost-3) > 0.000001 {
+		t.Fatalf("channel health = %#v", resp.ChannelHealth)
+	}
+}
+
 func newDashboardTestStore(t *testing.T) *store.Store {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "usage.sqlite"))

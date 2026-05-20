@@ -162,3 +162,113 @@ not-json`
 		t.Fatalf("result = %#v", result)
 	}
 }
+
+func TestParseImportPayloadPreservesAuthProjectIDSnapshot(t *testing.T) {
+	payload := `{
+	  "event_hash": "hash-project",
+	  "timestamp_ms": 1760000000000,
+	  "timestamp": "2025-10-09T08:53:20Z",
+	  "model": "gemini-2.5",
+	  "endpoint": "POST /v1/chat/completions",
+	  "auth_project_id_snapshot": "vertex-project-42",
+	  "input_tokens": 1,
+	  "total_tokens": 1
+	}`
+	result, err := ParseImportPayload([]byte(payload))
+	if err != nil {
+		t.Fatalf("parse exported event: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("result = %#v", result)
+	}
+	if got := result.Events[0].AuthProjectIDSnapshot; got != "vertex-project-42" {
+		t.Fatalf("auth_project_id_snapshot = %q", got)
+	}
+}
+
+func TestNormalizeRawReadsProjectID(t *testing.T) {
+	payload := `{
+	  "timestamp": "2026-05-19T10:00:00Z",
+	  "model": "gemini-2.5",
+	  "endpoint": "POST /v1/chat/completions",
+	  "project_id": "vertex-project-42",
+	  "input_tokens": 1,
+	  "total_tokens": 1
+	}`
+	event, err := NormalizeRaw([]byte(payload))
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if event.AuthProjectIDSnapshot != "vertex-project-42" {
+		t.Fatalf("auth_project_id_snapshot = %q", event.AuthProjectIDSnapshot)
+	}
+}
+
+func TestNormalizeRawSplitsAliasAndResolvedModel(t *testing.T) {
+	payload := `{
+	  "timestamp": "2026-05-19T10:00:00Z",
+	  "model": "gpt-5.5",
+	  "alias": "gpt-5.4",
+	  "endpoint": "POST /v1/chat/completions",
+	  "input_tokens": 1,
+	  "total_tokens": 1
+	}`
+	event, err := NormalizeRaw([]byte(payload))
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if event.RequestedModel != "gpt-5.4" {
+		t.Fatalf("requested_model = %q, want gpt-5.4", event.RequestedModel)
+	}
+	if event.ResolvedModel != "gpt-5.5" {
+		t.Fatalf("resolved_model = %q, want gpt-5.5", event.ResolvedModel)
+	}
+	if event.Model != "gpt-5.4" {
+		t.Fatalf("model = %q, want gpt-5.4", event.Model)
+	}
+}
+
+func TestNormalizeRawFallsBackToResolvedModelWhenAliasMissing(t *testing.T) {
+	payload := `{
+	  "timestamp": "2026-05-19T10:00:00Z",
+	  "model": "gpt-4.1",
+	  "endpoint": "POST /v1/chat/completions",
+	  "input_tokens": 1,
+	  "total_tokens": 1
+	}`
+	event, err := NormalizeRaw([]byte(payload))
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if event.RequestedModel != "" {
+		t.Fatalf("requested_model = %q, want empty", event.RequestedModel)
+	}
+	if event.ResolvedModel != "gpt-4.1" {
+		t.Fatalf("resolved_model = %q, want gpt-4.1", event.ResolvedModel)
+	}
+	if event.Model != "gpt-4.1" {
+		t.Fatalf("model = %q, want gpt-4.1", event.Model)
+	}
+}
+
+func TestBuildPayloadExposesResolvedModelOnDetails(t *testing.T) {
+	event := Event{
+		Timestamp:      "2026-05-19T10:00:00Z",
+		Endpoint:       "POST /v1/chat/completions",
+		Model:          "gpt-5.4",
+		RequestedModel: "gpt-5.4",
+		ResolvedModel:  "gpt-5.5",
+	}
+	payload := BuildPayload([]Event{event})
+	api := payload.APIs["POST /v1/chat/completions"]
+	if api == nil {
+		t.Fatalf("missing endpoint aggregate")
+	}
+	modelEntry := api.Models["gpt-5.4"]
+	if modelEntry == nil {
+		t.Fatalf("aggregation key should be requested model gpt-5.4, got %#v", api.Models)
+	}
+	if len(modelEntry.Details) != 1 || modelEntry.Details[0].ResolvedModel != "gpt-5.5" {
+		t.Fatalf("detail resolved_model = %#v", modelEntry.Details)
+	}
+}

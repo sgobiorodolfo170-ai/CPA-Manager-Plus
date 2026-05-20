@@ -2,6 +2,7 @@ package monitoring
 
 import (
 	"context"
+	"math"
 	"path/filepath"
 	"testing"
 	"time"
@@ -86,6 +87,57 @@ func TestAnalyticsBuildsIncludedSections(t *testing.T) {
 	}
 }
 
+func TestAnalyticsUsesResolvedModelPricingInAggregates(t *testing.T) {
+	db := newMonitoringTestStore(t)
+	ctx := context.Background()
+	fromMS := int64(1_778_000_000_000)
+	toMS := fromMS + 60*60*1000
+
+	if err := db.SaveModelPrices(ctx, map[string]store.ModelPrice{
+		"gpt-resolved-a": {Prompt: 1},
+		"gpt-resolved-b": {Completion: 2},
+	}); err != nil {
+		t.Fatalf("save model prices: %v", err)
+	}
+	first := monitoringEvent("resolved-cost-a", fromMS+1_000, "alias-fast", "auth-1", "source-a", false, 1_000_000, 0, 0, 0, 1_000_000, nil)
+	first.ResolvedModel = "gpt-resolved-a"
+	second := monitoringEvent("resolved-cost-b", fromMS+2_000, "alias-fast", "auth-1", "source-a", false, 0, 1_000_000, 0, 0, 1_000_000, nil)
+	second.ResolvedModel = "gpt-resolved-b"
+	if _, err := db.InsertEvents(ctx, []usage.Event{first, second}); err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	resp, err := New(db).Analytics(ctx, Request{
+		FromMS: fromMS,
+		ToMS:   toMS,
+		Include: Include{
+			Summary:      true,
+			ModelShare:   true,
+			ModelStats:   true,
+			ChannelShare: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("analytics: %v", err)
+	}
+
+	if resp.Summary == nil || math.Abs(resp.Summary.TotalCost-3) > 0.000001 {
+		t.Fatalf("summary cost = %#v", resp.Summary)
+	}
+	if len(resp.ModelStats) != 1 || resp.ModelStats[0].Model != "alias-fast" ||
+		resp.ModelStats[0].Calls != 2 || math.Abs(resp.ModelStats[0].Cost-3) > 0.000001 {
+		t.Fatalf("model stats = %#v", resp.ModelStats)
+	}
+	if len(resp.ModelShare) != 1 || resp.ModelShare[0].Model != "alias-fast" ||
+		math.Abs(resp.ModelShare[0].Cost-3) > 0.000001 {
+		t.Fatalf("model share = %#v", resp.ModelShare)
+	}
+	if len(resp.ChannelShare) != 1 || resp.ChannelShare[0].AuthIndex != "auth-1" ||
+		math.Abs(resp.ChannelShare[0].Cost-3) > 0.000001 {
+		t.Fatalf("channel share = %#v", resp.ChannelShare)
+	}
+}
+
 func TestAnalyticsAppliesFilters(t *testing.T) {
 	db := newMonitoringTestStore(t)
 	ctx := context.Background()
@@ -138,6 +190,35 @@ func TestAnalyticsAppliesFilters(t *testing.T) {
 	}
 	if resp.Events == nil || len(resp.Events.Items) != 1 || resp.Events.Items[0].EventHash != "filter-c" {
 		t.Fatalf("api key hash search events = %#v", resp.Events)
+	}
+}
+
+func TestAnalyticsSearchMatchesResolvedModelAndProjectID(t *testing.T) {
+	db := newMonitoringTestStore(t)
+	ctx := context.Background()
+	fromMS := int64(1_778_000_000_000)
+	toMS := fromMS + 60*60*1000
+
+	event := monitoringEvent("search-new-fields", fromMS+1_000, "alias-search", "auth-1", "source-a", false, 1, 1, 0, 0, 2, nil)
+	event.ResolvedModel = "gpt-resolved-search"
+	event.AuthProjectIDSnapshot = "vertex-project-42"
+	if _, err := db.InsertEvents(ctx, []usage.Event{event}); err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	for _, query := range []string{"gpt-resolved-search", "vertex-project-42"} {
+		resp, err := New(db).Analytics(ctx, Request{
+			FromMS:      fromMS,
+			ToMS:        toMS,
+			SearchQuery: query,
+			Include:     Include{EventsPage: &EventsPage{Limit: 10}},
+		})
+		if err != nil {
+			t.Fatalf("analytics search %q: %v", query, err)
+		}
+		if resp.Events == nil || len(resp.Events.Items) != 1 || resp.Events.Items[0].EventHash != "search-new-fields" {
+			t.Fatalf("search %q events = %#v", query, resp.Events)
+		}
 	}
 }
 

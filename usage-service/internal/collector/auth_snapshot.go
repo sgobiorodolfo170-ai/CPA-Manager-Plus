@@ -20,6 +20,7 @@ type authSnapshot struct {
 	Label        string
 	FileName     string
 	Provider     string
+	ProjectID    string
 	CapturedAtMS int64
 }
 
@@ -146,6 +147,12 @@ func (r *authSnapshotResolver) fetch(ctx context.Context, baseURL string, manage
 			readAuthFileString(file, "provider"),
 			readAuthFileString(file, "type"),
 		)
+		projectID := firstNonEmpty(
+			readAuthFileString(file, "project_id"),
+			readAuthFileString(file, "projectId"),
+			readAuthFileString(file, "gemini_virtual_project"),
+			readAuthFileString(file, "geminiVirtualProject"),
+		)
 		if account == "" {
 			account = firstNonEmpty(label, fileName)
 		}
@@ -154,6 +161,7 @@ func (r *authSnapshotResolver) fetch(ctx context.Context, baseURL string, manage
 			Label:        label,
 			FileName:     fileName,
 			Provider:     provider,
+			ProjectID:    projectID,
 			CapturedAtMS: capturedAt,
 		}
 	}

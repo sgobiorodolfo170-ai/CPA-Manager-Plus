@@ -55,10 +55,11 @@ func (r *repository) InsertBatch(ctx context.Context, events []model.UsageEvent)
 	stmt, err := tx.PrepareContext(ctx, `insert or ignore into usage_events (
 		request_id, event_hash, timestamp_ms, timestamp, provider, model, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
-		account_snapshot, auth_label_snapshot, auth_file_snapshot, auth_provider_snapshot, auth_snapshot_at_ms,
+		account_snapshot, auth_label_snapshot, auth_file_snapshot, auth_provider_snapshot, auth_project_id_snapshot, auth_snapshot_at_ms,
+		requested_model, resolved_model,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
 		latency_ms, failed, raw_json, created_at_ms
-	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return model.InsertResult{}, err
 	}
@@ -90,7 +91,10 @@ func (r *repository) InsertBatch(ctx context.Context, events []model.UsageEvent)
 			nullString(event.AuthLabelSnapshot),
 			nullString(event.AuthFileSnapshot),
 			nullString(event.AuthProviderSnapshot),
+			nullString(event.AuthProjectIDSnapshot),
 			nullPositiveInt64(event.AuthSnapshotAtMS),
+			nullString(event.RequestedModel),
+			nullString(event.ResolvedModel),
 			event.InputTokens,
 			event.OutputTokens,
 			event.ReasoningTokens,
@@ -125,7 +129,8 @@ func (r *repository) ListRecent(ctx context.Context, limit int) ([]model.UsageEv
 	rows, err := r.db.QueryContext(ctx, `select
 		request_id, event_hash, timestamp_ms, timestamp, provider, model, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
-		account_snapshot, auth_label_snapshot, auth_file_snapshot, auth_provider_snapshot, auth_snapshot_at_ms,
+		account_snapshot, auth_label_snapshot, auth_file_snapshot, auth_provider_snapshot, auth_project_id_snapshot, auth_snapshot_at_ms,
+		requested_model, resolved_model,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
 		latency_ms, failed, raw_json, created_at_ms
 		from usage_events
@@ -139,7 +144,7 @@ func (r *repository) ListRecent(ctx context.Context, limit int) ([]model.UsageEv
 	events := make([]model.UsageEvent, 0)
 	for rows.Next() {
 		var event model.UsageEvent
-		var requestID, provider, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, accountSnapshot, authLabelSnapshot, authFileSnapshot, authProviderSnapshot, rawJSON sql.NullString
+		var requestID, provider, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, accountSnapshot, authLabelSnapshot, authFileSnapshot, authProviderSnapshot, authProjectIDSnapshot, requestedModel, resolvedModel, rawJSON sql.NullString
 		var authSnapshotAt sql.NullInt64
 		var latency sql.NullInt64
 		var failed int
@@ -162,7 +167,10 @@ func (r *repository) ListRecent(ctx context.Context, limit int) ([]model.UsageEv
 			&authLabelSnapshot,
 			&authFileSnapshot,
 			&authProviderSnapshot,
+			&authProjectIDSnapshot,
 			&authSnapshotAt,
+			&requestedModel,
+			&resolvedModel,
 			&event.InputTokens,
 			&event.OutputTokens,
 			&event.ReasoningTokens,
@@ -190,6 +198,9 @@ func (r *repository) ListRecent(ctx context.Context, limit int) ([]model.UsageEv
 		event.AuthLabelSnapshot = authLabelSnapshot.String
 		event.AuthFileSnapshot = authFileSnapshot.String
 		event.AuthProviderSnapshot = authProviderSnapshot.String
+		event.AuthProjectIDSnapshot = authProjectIDSnapshot.String
+		event.RequestedModel = requestedModel.String
+		event.ResolvedModel = resolvedModel.String
 		if authSnapshotAt.Valid {
 			event.AuthSnapshotAtMS = authSnapshotAt.Int64
 		}

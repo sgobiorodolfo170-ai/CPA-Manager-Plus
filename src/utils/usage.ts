@@ -34,12 +34,15 @@ export interface UsageDetail {
   authFileSnapshot?: string;
   auth_provider_snapshot?: string;
   authProviderSnapshot?: string;
+  auth_project_id_snapshot?: string;
+  authProjectIdSnapshot?: string;
   auth_snapshot_at_ms?: number;
   authSnapshotAtMs?: number;
   latency_ms?: number;
   tokens: UsageTokens;
   failed: boolean;
   __modelName?: string;
+  __resolvedModel?: string;
   __timestampMs?: number;
 }
 
@@ -64,7 +67,7 @@ const USAGE_SOURCE_PREFIX_KEY = 'k:';
 const USAGE_SOURCE_PREFIX_MASKED = 'm:';
 const USAGE_SOURCE_PREFIX_TEXT = 't:';
 const KEY_LIKE_TOKEN_REGEX =
-  /(sk-[A-Za-z0-9-_]{6,}|sk-ant-[A-Za-z0-9-_]{6,}|AIza[0-9A-Za-z-_]{8,}|AI[a-zA-Z0-9_-]{6,}|hf_[A-Za-z0-9]{6,}|pk_[A-Za-z0-9]{6,}|rk_[A-Za-z0-9]{6,})/;
+  /(sk-proj-[A-Za-z0-9-_]{6,}|sk-ant-[A-Za-z0-9-_]{6,}|sk-[A-Za-z0-9-_]{6,}|sess-[A-Za-z0-9-_]{6,}|ghp_[A-Za-z0-9]{6,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z-_]{8,}|AI[a-zA-Z0-9_-]{6,}|hf_[A-Za-z0-9]{6,}|pk_[A-Za-z0-9]{6,}|rk_[A-Za-z0-9]{6,})/;
 const MASKED_TOKEN_HINT_REGEX = /^[^\s]{1,24}(\*{2,}|\.{3})[^\s]{1,24}$/;
 
 const keyFingerprintCache = new Map<string, string>();
@@ -277,6 +280,9 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
           auth_provider_snapshot: readDetailString(
             detailRaw.auth_provider_snapshot ?? detailRaw.authProviderSnapshot
           ),
+          auth_project_id_snapshot: readDetailString(
+            detailRaw.auth_project_id_snapshot ?? detailRaw.authProjectIdSnapshot
+          ),
           auth_snapshot_at_ms: toPositiveNumber(
             detailRaw.auth_snapshot_at_ms ?? detailRaw.authSnapshotAtMs
           ),
@@ -284,6 +290,7 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
           tokens: readTokens(detailRaw),
           failed: detailRaw.failed === true,
           __modelName: modelName,
+          __resolvedModel: readDetailString(detailRaw.resolved_model ?? detailRaw.resolvedModel),
           __timestampMs: Number.isNaN(timestampMs) ? 0 : timestampMs,
         });
       });
@@ -343,6 +350,9 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
           auth_provider_snapshot: readDetailString(
             detailRaw.auth_provider_snapshot ?? detailRaw.authProviderSnapshot
           ),
+          auth_project_id_snapshot: readDetailString(
+            detailRaw.auth_project_id_snapshot ?? detailRaw.authProjectIdSnapshot
+          ),
           auth_snapshot_at_ms: toPositiveNumber(
             detailRaw.auth_snapshot_at_ms ?? detailRaw.authSnapshotAtMs
           ),
@@ -350,6 +360,7 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
           tokens: readTokens(detailRaw),
           failed: detailRaw.failed === true,
           __modelName: modelName,
+          __resolvedModel: readDetailString(detailRaw.resolved_model ?? detailRaw.resolvedModel),
           __endpoint: endpoint,
           __endpointMethod: endpointMethod,
           __endpointPath: endpointPath,
@@ -381,11 +392,12 @@ export function extractTotalTokens(detail: unknown): number {
 }
 
 export function calculateCost(
-  detail: Pick<UsageDetail, 'tokens' | '__modelName'>,
+  detail: Pick<UsageDetail, 'tokens' | '__modelName' | '__resolvedModel'>,
   modelPrices: Record<string, ModelPrice>
 ): number {
-  const modelName = detail.__modelName || '';
-  const price = modelPrices[modelName];
+  const resolvedModel = detail.__resolvedModel || '';
+  const requestedModel = detail.__modelName || '';
+  const price = modelPrices[resolvedModel] || modelPrices[requestedModel];
   if (!price) return 0;
 
   const inputTokens = Math.max(toFiniteNumber(detail.tokens.input_tokens), 0);

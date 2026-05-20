@@ -357,6 +357,7 @@ export const buildUsageDetailsFromAnalyticsEvents = (
     account_snapshot: readString(item.account_snapshot),
     auth_label_snapshot: readString(item.auth_label_snapshot),
     auth_provider_snapshot: readString(item.auth_provider_snapshot),
+    auth_project_id_snapshot: readString(item.auth_project_id_snapshot),
     latency_ms: item.latency_ms ?? undefined,
     tokens: {
       input_tokens: item.input_tokens,
@@ -367,6 +368,7 @@ export const buildUsageDetailsFromAnalyticsEvents = (
     },
     failed: item.failed === true,
     __modelName: item.model,
+    __resolvedModel: readString(item.resolved_model),
     __endpoint: item.endpoint || `${item.method} ${item.path}`.trim(),
     __endpointMethod: item.method,
     __endpointPath: item.path,

@@ -78,6 +78,52 @@ func TestStorePersistsAccountSnapshot(t *testing.T) {
 	}
 }
 
+func TestStorePersistsRequestedAndResolvedModels(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	_, err = db.InsertEvents(context.Background(), []usage.Event{
+		{
+			EventHash:      "event-dual",
+			TimestampMS:    1_778_000_001_000,
+			Timestamp:      "2026-05-06T00:00:01Z",
+			Model:          "gpt-5.4",
+			RequestedModel: "gpt-5.4",
+			ResolvedModel:  "gpt-5.5",
+			Endpoint:       "POST /v1/chat/completions",
+			CreatedAtMS:    1_778_000_001_100,
+		},
+	})
+	if err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	events, err := db.RecentEvents(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("recent events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("len(events) = %d, want 1", len(events))
+	}
+	if events[0].RequestedModel != "gpt-5.4" {
+		t.Fatalf("RequestedModel roundtrip = %q", events[0].RequestedModel)
+	}
+	if events[0].ResolvedModel != "gpt-5.5" {
+		t.Fatalf("ResolvedModel roundtrip = %q", events[0].ResolvedModel)
+	}
+
+	payload := usage.BuildPayload(events)
+	detail := payload.APIs["POST /v1/chat/completions"].Models["gpt-5.4"].Details[0]
+	if detail.ResolvedModel != "gpt-5.5" {
+		t.Fatalf("payload Detail.ResolvedModel = %q", detail.ResolvedModel)
+	}
+}
+
 func TestStoreAPIKeyAliases(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
 	if err != nil {

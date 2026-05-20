@@ -31,7 +31,10 @@ func Migrate(db *sql.DB) error {
 			auth_label_snapshot text,
 			auth_file_snapshot text,
 			auth_provider_snapshot text,
+			auth_project_id_snapshot text,
 			auth_snapshot_at_ms integer,
+			requested_model text,
+			resolved_model text,
 			input_tokens integer not null default 0,
 			output_tokens integer not null default 0,
 			reasoning_tokens integer not null default 0,
@@ -116,7 +119,10 @@ func ensureUsageEventSnapshotColumns(db *sql.DB) error {
 		{name: "auth_label_snapshot", definition: "text"},
 		{name: "auth_file_snapshot", definition: "text"},
 		{name: "auth_provider_snapshot", definition: "text"},
+		{name: "auth_project_id_snapshot", definition: "text"},
 		{name: "auth_snapshot_at_ms", definition: "integer"},
+		{name: "requested_model", definition: "text"},
+		{name: "resolved_model", definition: "text"},
 	}
 	for _, column := range columns {
 		if _, ok := existing[column.name]; ok {

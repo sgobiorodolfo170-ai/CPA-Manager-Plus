@@ -38,6 +38,7 @@ type HourlyPoint struct {
 type ChannelModelStat struct {
 	AuthIndex    string
 	Model        string
+	BillingModel string
 	Calls        int64
 	SuccessCalls int64
 	FailureCalls int64
@@ -78,27 +79,29 @@ type TaskBucket struct {
 }
 
 type EventPageItem struct {
-	EventHash            string
-	TimestampMS          int64
-	Timestamp            string
-	Model                string
-	Endpoint             string
-	Method               string
-	Path                 string
-	AuthIndex            string
-	Source               string
-	SourceHash           string
-	APIKeyHash           string
-	AccountSnapshot      string
-	AuthLabelSnapshot    string
-	AuthProviderSnapshot string
-	InputTokens          int64
-	OutputTokens         int64
-	CachedTokens         int64
-	ReasoningTokens      int64
-	TotalTokens          int64
-	LatencyMS            sql.NullInt64
-	Failed               bool
+	EventHash             string
+	TimestampMS           int64
+	Timestamp             string
+	Model                 string
+	ResolvedModel         string
+	Endpoint              string
+	Method                string
+	Path                  string
+	AuthIndex             string
+	Source                string
+	SourceHash            string
+	APIKeyHash            string
+	AccountSnapshot       string
+	AuthLabelSnapshot     string
+	AuthProviderSnapshot  string
+	AuthProjectIDSnapshot string
+	InputTokens           int64
+	OutputTokens          int64
+	CachedTokens          int64
+	ReasoningTokens       int64
+	TotalTokens           int64
+	LatencyMS             sql.NullInt64
+	Failed                bool
 }
 
 type EventsPage struct {
@@ -147,6 +150,7 @@ func (r *repository) ModelStatsWithFilter(ctx context.Context, filter AnalyticsF
 	where, args := analyticsWhere(filter)
 	query := `select
 	model,
+	coalesce(nullif(resolved_model, ''), model) as billing_model,
 	count(*) as calls,
 	sum(case when failed = 0 then 1 else 0 end) as success,
 	coalesce(sum(input_tokens), 0),
@@ -155,10 +159,33 @@ func (r *repository) ModelStatsWithFilter(ctx context.Context, filter AnalyticsF
 	coalesce(sum(case when cached_tokens > cache_tokens then cached_tokens else cache_tokens end), 0),
 	coalesce(sum(total_tokens), 0)
 from usage_events ` + where + `
-group by model
+group by model, billing_model
 order by calls desc`
 	if limit > 0 {
-		query += ` limit ?`
+		query = `with filtered as (
+	select * from usage_events ` + where + `
+),
+top_models as (
+	select model, count(*) as model_calls
+	from filtered
+	group by model
+	order by model_calls desc
+	limit ?
+)
+select
+	f.model,
+	coalesce(nullif(f.resolved_model, ''), f.model) as billing_model,
+	count(*) as calls,
+	sum(case when f.failed = 0 then 1 else 0 end) as success,
+	coalesce(sum(f.input_tokens), 0),
+	coalesce(sum(f.output_tokens), 0),
+	coalesce(sum(f.reasoning_tokens), 0),
+	coalesce(sum(case when f.cached_tokens > f.cache_tokens then f.cached_tokens else f.cache_tokens end), 0),
+	coalesce(sum(f.total_tokens), 0)
+from filtered f
+join top_models t on t.model = f.model
+group by f.model, billing_model
+order by max(t.model_calls) desc, f.model, calls desc`
 		args = append(args, limit)
 	}
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -172,6 +199,7 @@ order by calls desc`
 		var stat ModelStat
 		if err := rows.Scan(
 			&stat.Model,
+			&stat.BillingModel,
 			&stat.Calls,
 			&stat.SuccessCalls,
 			&stat.InputTokens,
@@ -249,6 +277,7 @@ func (r *repository) ChannelModelStatsWithFilter(ctx context.Context, filter Ana
 	rows, err := r.db.QueryContext(ctx, `select
 	coalesce(auth_index, ''),
 	model,
+	coalesce(nullif(resolved_model, ''), model) as billing_model,
 	count(*),
 	sum(case when failed = 0 then 1 else 0 end),
 	sum(case when failed = 1 then 1 else 0 end),
@@ -258,7 +287,7 @@ func (r *repository) ChannelModelStatsWithFilter(ctx context.Context, filter Ana
 	coalesce(sum(total_tokens), 0),
 	avg(nullif(latency_ms, 0))
 from usage_events `+where+`
-group by auth_index, model
+group by auth_index, model, billing_model
 order by count(*) desc`, args...)
 	if err != nil {
 		return nil, err
@@ -271,6 +300,7 @@ order by count(*) desc`, args...)
 		if err := rows.Scan(
 			&stat.AuthIndex,
 			&stat.Model,
+			&stat.BillingModel,
 			&stat.Calls,
 			&stat.SuccessCalls,
 			&stat.FailureCalls,
@@ -432,6 +462,7 @@ func (r *repository) EventsPageWithFilter(ctx context.Context, filter AnalyticsF
 	timestamp_ms,
 	timestamp,
 	model,
+	coalesce(resolved_model, ''),
 	coalesce(endpoint, ''),
 	coalesce(method, ''),
 	coalesce(path, ''),
@@ -442,6 +473,7 @@ func (r *repository) EventsPageWithFilter(ctx context.Context, filter AnalyticsF
 	coalesce(account_snapshot, ''),
 	coalesce(auth_label_snapshot, ''),
 	coalesce(auth_provider_snapshot, ''),
+	coalesce(auth_project_id_snapshot, ''),
 	input_tokens,
 	output_tokens,
 	case when cached_tokens > cache_tokens then cached_tokens else cache_tokens end,
@@ -466,6 +498,7 @@ limit ?`, args...)
 			&item.TimestampMS,
 			&item.Timestamp,
 			&item.Model,
+			&item.ResolvedModel,
 			&item.Endpoint,
 			&item.Method,
 			&item.Path,
@@ -476,6 +509,7 @@ limit ?`, args...)
 			&item.AccountSnapshot,
 			&item.AuthLabelSnapshot,
 			&item.AuthProviderSnapshot,
+			&item.AuthProjectIDSnapshot,
 			&item.InputTokens,
 			&item.OutputTokens,
 			&item.CachedTokens,
@@ -548,11 +582,11 @@ func analyticsWhere(filter AnalyticsFilter) (string, []any) {
 	if query != "" {
 		like := "%" + query + "%"
 		if hash != "" {
-			conditions = append(conditions, `(lower(coalesce(model, '')) like ? or lower(coalesce(endpoint, '')) like ? or lower(coalesce(source, '')) like ? or lower(coalesce(source_hash, '')) like ? or lower(coalesce(api_key_hash, '')) like ? or lower(coalesce(api_key_hash, '')) = ?)`)
-			args = append(args, like, like, like, like, like, hash)
+			conditions = append(conditions, `(lower(coalesce(model, '')) like ? or lower(coalesce(resolved_model, '')) like ? or lower(coalesce(endpoint, '')) like ? or lower(coalesce(source, '')) like ? or lower(coalesce(source_hash, '')) like ? or lower(coalesce(api_key_hash, '')) like ? or lower(coalesce(auth_project_id_snapshot, '')) like ? or lower(coalesce(api_key_hash, '')) = ?)`)
+			args = append(args, like, like, like, like, like, like, like, hash)
 		} else {
-			conditions = append(conditions, `(lower(coalesce(model, '')) like ? or lower(coalesce(endpoint, '')) like ? or lower(coalesce(source, '')) like ? or lower(coalesce(source_hash, '')) like ? or lower(coalesce(api_key_hash, '')) like ?)`)
-			args = append(args, like, like, like, like, like)
+			conditions = append(conditions, `(lower(coalesce(model, '')) like ? or lower(coalesce(resolved_model, '')) like ? or lower(coalesce(endpoint, '')) like ? or lower(coalesce(source, '')) like ? or lower(coalesce(source_hash, '')) like ? or lower(coalesce(api_key_hash, '')) like ? or lower(coalesce(auth_project_id_snapshot, '')) like ?)`)
+			args = append(args, like, like, like, like, like, like, like)
 		}
 	} else if hash != "" {
 		conditions = append(conditions, "lower(coalesce(api_key_hash, '')) = ?")

@@ -410,7 +410,7 @@ func (m *Manager) enrichAccountSnapshots(ctx context.Context, cfg RuntimeConfig,
 	}
 	authIndices := make(map[string]struct{})
 	for i := range events {
-		if events[i].AccountSnapshot != "" || events[i].AuthIndex == "" {
+		if events[i].AuthIndex == "" || !needsAccountSnapshotEnrichment(events[i]) {
 			continue
 		}
 		authIndices[events[i].AuthIndex] = struct{}{}
@@ -423,19 +423,43 @@ func (m *Manager) enrichAccountSnapshots(ctx context.Context, cfg RuntimeConfig,
 		return
 	}
 	for i := range events {
-		if events[i].AuthIndex == "" || events[i].AccountSnapshot != "" {
+		if events[i].AuthIndex == "" || !needsAccountSnapshotEnrichment(events[i]) {
 			continue
 		}
 		snapshot, ok := snapshots[events[i].AuthIndex]
 		if !ok {
 			continue
 		}
-		events[i].AccountSnapshot = snapshot.Account
-		events[i].AuthLabelSnapshot = snapshot.Label
-		events[i].AuthFileSnapshot = snapshot.FileName
-		events[i].AuthProviderSnapshot = snapshot.Provider
-		events[i].AuthSnapshotAtMS = snapshot.CapturedAtMS
+		updated := false
+		if events[i].AccountSnapshot == "" && snapshot.Account != "" {
+			events[i].AccountSnapshot = snapshot.Account
+			updated = true
+		}
+		if events[i].AuthLabelSnapshot == "" && snapshot.Label != "" {
+			events[i].AuthLabelSnapshot = snapshot.Label
+			updated = true
+		}
+		if events[i].AuthFileSnapshot == "" && snapshot.FileName != "" {
+			events[i].AuthFileSnapshot = snapshot.FileName
+			updated = true
+		}
+		if events[i].AuthProviderSnapshot == "" && snapshot.Provider != "" {
+			events[i].AuthProviderSnapshot = snapshot.Provider
+			updated = true
+		}
+		if events[i].AuthProjectIDSnapshot == "" && snapshot.ProjectID != "" {
+			events[i].AuthProjectIDSnapshot = snapshot.ProjectID
+			updated = true
+		}
+		if updated && events[i].AuthSnapshotAtMS == 0 {
+			events[i].AuthSnapshotAtMS = snapshot.CapturedAtMS
+		}
 	}
+}
+
+func needsAccountSnapshotEnrichment(event usage.Event) bool {
+	return event.AccountSnapshot == "" ||
+		event.AuthProjectIDSnapshot == ""
 }
 
 func (m *Manager) markError(stage string, err error) {

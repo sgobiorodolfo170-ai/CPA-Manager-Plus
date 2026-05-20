@@ -300,13 +300,14 @@ func buildRollingSummary(agg store.Aggregate) RollingSummary {
 }
 
 func buildTopModels(stats []store.ModelStat, prices map[string]store.ModelPrice) []TopModel {
-	result := make([]TopModel, 0, len(stats))
-	for _, stat := range stats {
+	aggregated := aggregateModelStats(stats, prices)
+	result := make([]TopModel, 0, len(aggregated))
+	for _, stat := range aggregated {
 		result = append(result, TopModel{
 			Model:       stat.Model,
 			Calls:       stat.Calls,
 			Tokens:      stat.TotalTokens,
-			Cost:        costForStat(stat, prices),
+			Cost:        stat.Cost,
 			SuccessRate: rate(stat.SuccessCalls, stat.Calls),
 		})
 	}
@@ -437,18 +438,18 @@ func buildTokenMix(today TodaySummary) []TokenMixSegment {
 }
 
 func buildModelCostRank(stats []store.ModelStat, prices map[string]store.ModelPrice, limit int) []ModelCostRank {
-	rows := make([]ModelCostRank, 0, len(stats))
+	aggregated := aggregateModelStats(stats, prices)
+	rows := make([]ModelCostRank, 0, len(aggregated))
 	var maxCost float64
-	for _, stat := range stats {
-		cost := costForStat(stat, prices)
-		if cost > maxCost {
-			maxCost = cost
+	for _, stat := range aggregated {
+		if stat.Cost > maxCost {
+			maxCost = stat.Cost
 		}
 		rows = append(rows, ModelCostRank{
 			Model:       stat.Model,
 			Calls:       stat.Calls,
 			Tokens:      stat.TotalTokens,
-			Cost:        cost,
+			Cost:        stat.Cost,
 			SuccessRate: rate(stat.SuccessCalls, stat.Calls),
 		})
 	}
@@ -487,11 +488,7 @@ func buildChannelHealth(stats []store.ChannelModelStat, prices map[string]store.
 		entry.row.Calls += stat.Calls
 		entry.row.Failures += stat.FailureCalls
 		entry.row.Tokens += stat.TotalTokens
-		entry.row.Cost += pricing.CostForModel(stat.Model, pricing.ModelTokens{
-			InputTokens:  stat.InputTokens,
-			OutputTokens: stat.OutputTokens,
-			CachedTokens: stat.CachedTokens,
-		}, prices)
+		entry.row.Cost += costForChannelStat(stat, prices)
 		if stat.AvgLatencyMS.Valid {
 			entry.latencySum += stat.AvgLatencyMS.Float64
 			entry.latencyN++
@@ -576,8 +573,57 @@ func totalCost(stats []store.ModelStat, prices map[string]store.ModelPrice) floa
 	return total
 }
 
+type aggregatedModelStat struct {
+	Model        string
+	Calls        int64
+	SuccessCalls int64
+	TotalTokens  int64
+	Cost         float64
+}
+
+func aggregateModelStats(stats []store.ModelStat, prices map[string]store.ModelPrice) []aggregatedModelStat {
+	grouped := make(map[string]*aggregatedModelStat, len(stats))
+	order := make([]string, 0, len(stats))
+	for _, stat := range stats {
+		entry := grouped[stat.Model]
+		if entry == nil {
+			entry = &aggregatedModelStat{Model: stat.Model}
+			grouped[stat.Model] = entry
+			order = append(order, stat.Model)
+		}
+		entry.Calls += stat.Calls
+		entry.SuccessCalls += stat.SuccessCalls
+		entry.TotalTokens += stat.TotalTokens
+		entry.Cost += costForStat(stat, prices)
+	}
+	result := make([]aggregatedModelStat, 0, len(order))
+	for _, model := range order {
+		result = append(result, *grouped[model])
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].Calls > result[j].Calls
+	})
+	return result
+}
+
 func costForStat(stat store.ModelStat, prices map[string]store.ModelPrice) float64 {
-	return pricing.CostForModel(stat.Model, pricing.ModelTokens{
+	model := stat.BillingModel
+	if model == "" {
+		model = stat.Model
+	}
+	return pricing.CostForModel(model, pricing.ModelTokens{
+		InputTokens:  stat.InputTokens,
+		OutputTokens: stat.OutputTokens,
+		CachedTokens: stat.CachedTokens,
+	}, prices)
+}
+
+func costForChannelStat(stat store.ChannelModelStat, prices map[string]store.ModelPrice) float64 {
+	model := stat.BillingModel
+	if model == "" {
+		model = stat.Model
+	}
+	return pricing.CostForModel(model, pricing.ModelTokens{
 		InputTokens:  stat.InputTokens,
 		OutputTokens: stat.OutputTokens,
 		CachedTokens: stat.CachedTokens,

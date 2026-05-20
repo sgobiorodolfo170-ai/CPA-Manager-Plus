@@ -22,6 +22,7 @@ type Aggregate struct {
 // ModelStat aggregates per-model totals.
 type ModelStat struct {
 	Model           string
+	BillingModel    string
 	Calls           int64
 	SuccessCalls    int64
 	InputTokens     int64
@@ -80,27 +81,38 @@ func (r *repository) AggregateBetween(ctx context.Context, fromMs, toMs int64) (
 	return agg, nil
 }
 
-const topModelsSQL = `select
-	model,
+const topModelsSQL = `with top_models as (
+	select
+		model,
+		count(*) as model_calls
+	from usage_events
+	where timestamp_ms >= ? and timestamp_ms < ?
+	group by model
+	order by model_calls desc
+	limit ?
+)
+select
+	e.model,
+	coalesce(nullif(e.resolved_model, ''), e.model) as billing_model,
 	count(*) as calls,
-	sum(case when failed = 0 then 1 else 0 end) as success,
-	coalesce(sum(input_tokens), 0),
-	coalesce(sum(output_tokens), 0),
-	coalesce(sum(reasoning_tokens), 0),
-	coalesce(sum(case when cached_tokens > cache_tokens then cached_tokens else cache_tokens end), 0),
-	coalesce(sum(total_tokens), 0)
-from usage_events
-where timestamp_ms >= ? and timestamp_ms < ?
-group by model
-order by calls desc
-limit ?`
+	sum(case when e.failed = 0 then 1 else 0 end) as success,
+	coalesce(sum(e.input_tokens), 0),
+	coalesce(sum(e.output_tokens), 0),
+	coalesce(sum(e.reasoning_tokens), 0),
+	coalesce(sum(case when e.cached_tokens > e.cache_tokens then e.cached_tokens else e.cache_tokens end), 0),
+	coalesce(sum(e.total_tokens), 0)
+from usage_events e
+join top_models t on t.model = e.model
+where e.timestamp_ms >= ? and e.timestamp_ms < ?
+group by e.model, billing_model
+order by max(t.model_calls) desc, e.model, calls desc`
 
 // TopModelsBetween returns the most active models ordered by call count.
 func (r *repository) TopModelsBetween(ctx context.Context, fromMs, toMs int64, limit int) ([]ModelStat, error) {
 	if limit <= 0 {
 		limit = 5
 	}
-	rows, err := r.db.QueryContext(ctx, topModelsSQL, fromMs, toMs, limit)
+	rows, err := r.db.QueryContext(ctx, topModelsSQL, fromMs, toMs, limit, fromMs, toMs)
 	if err != nil {
 		return nil, err
 	}
@@ -111,6 +123,7 @@ func (r *repository) TopModelsBetween(ctx context.Context, fromMs, toMs int64, l
 		var stat ModelStat
 		if err := rows.Scan(
 			&stat.Model,
+			&stat.BillingModel,
 			&stat.Calls,
 			&stat.SuccessCalls,
 			&stat.InputTokens,
@@ -128,6 +141,7 @@ func (r *repository) TopModelsBetween(ctx context.Context, fromMs, toMs int64, l
 
 const modelStatsSQL = `select
 	model,
+	coalesce(nullif(resolved_model, ''), model) as billing_model,
 	count(*) as calls,
 	sum(case when failed = 0 then 1 else 0 end) as success,
 	coalesce(sum(input_tokens), 0),
@@ -137,7 +151,7 @@ const modelStatsSQL = `select
 	coalesce(sum(total_tokens), 0)
 from usage_events
 where timestamp_ms >= ? and timestamp_ms < ?
-group by model
+group by model, billing_model
 order by calls desc`
 
 // ModelStatsBetween returns per-model totals for all models in a window.
@@ -153,6 +167,7 @@ func (r *repository) ModelStatsBetween(ctx context.Context, fromMs, toMs int64) 
 		var stat ModelStat
 		if err := rows.Scan(
 			&stat.Model,
+			&stat.BillingModel,
 			&stat.Calls,
 			&stat.SuccessCalls,
 			&stat.InputTokens,

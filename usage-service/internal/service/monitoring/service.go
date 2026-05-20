@@ -3,6 +3,7 @@ package monitoring
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -192,26 +193,28 @@ type EventsResponse struct {
 }
 
 type EventRow struct {
-	EventHash            string `json:"event_hash"`
-	TimestampMS          int64  `json:"timestamp_ms"`
-	Model                string `json:"model"`
-	Endpoint             string `json:"endpoint"`
-	Method               string `json:"method"`
-	Path                 string `json:"path"`
-	AuthIndex            string `json:"auth_index"`
-	Source               string `json:"source"`
-	SourceHash           string `json:"source_hash"`
-	APIKeyHash           string `json:"api_key_hash"`
-	AccountSnapshot      string `json:"account_snapshot"`
-	AuthLabelSnapshot    string `json:"auth_label_snapshot"`
-	AuthProviderSnapshot string `json:"auth_provider_snapshot"`
-	InputTokens          int64  `json:"input_tokens"`
-	OutputTokens         int64  `json:"output_tokens"`
-	CachedTokens         int64  `json:"cached_tokens"`
-	ReasoningTokens      int64  `json:"reasoning_tokens"`
-	TotalTokens          int64  `json:"total_tokens"`
-	LatencyMS            *int64 `json:"latency_ms"`
-	Failed               bool   `json:"failed"`
+	EventHash             string `json:"event_hash"`
+	TimestampMS           int64  `json:"timestamp_ms"`
+	Model                 string `json:"model"`
+	ResolvedModel         string `json:"resolved_model,omitempty"`
+	Endpoint              string `json:"endpoint"`
+	Method                string `json:"method"`
+	Path                  string `json:"path"`
+	AuthIndex             string `json:"auth_index"`
+	Source                string `json:"source"`
+	SourceHash            string `json:"source_hash"`
+	APIKeyHash            string `json:"api_key_hash"`
+	AccountSnapshot       string `json:"account_snapshot"`
+	AuthLabelSnapshot     string `json:"auth_label_snapshot"`
+	AuthProviderSnapshot  string `json:"auth_provider_snapshot"`
+	AuthProjectIDSnapshot string `json:"auth_project_id_snapshot,omitempty"`
+	InputTokens           int64  `json:"input_tokens"`
+	OutputTokens          int64  `json:"output_tokens"`
+	CachedTokens          int64  `json:"cached_tokens"`
+	ReasoningTokens       int64  `json:"reasoning_tokens"`
+	TotalTokens           int64  `json:"total_tokens"`
+	LatencyMS             *int64 `json:"latency_ms"`
+	Failed                bool   `json:"failed"`
 }
 
 func (s *Service) Analytics(ctx context.Context, req Request) (Response, error) {
@@ -429,21 +432,23 @@ func buildHourly(points []store.HourlyPoint) []HourlyPoint {
 }
 
 func buildModelShare(stats []store.ModelStat, prices map[string]store.ModelPrice) []ModelShareRow {
-	result := make([]ModelShareRow, 0, len(stats))
-	for _, stat := range stats {
+	aggregated := aggregateModelStats(stats, prices)
+	result := make([]ModelShareRow, 0, len(aggregated))
+	for _, stat := range aggregated {
 		result = append(result, ModelShareRow{
 			Model:  stat.Model,
 			Calls:  stat.Calls,
 			Tokens: stat.TotalTokens,
-			Cost:   costForStat(stat, prices),
+			Cost:   stat.Cost,
 		})
 	}
 	return result
 }
 
 func buildModelStats(stats []store.ModelStat, prices map[string]store.ModelPrice) []ModelStat {
-	result := make([]ModelStat, 0, len(stats))
-	for _, stat := range stats {
+	aggregated := aggregateModelStats(stats, prices)
+	result := make([]ModelStat, 0, len(aggregated))
+	for _, stat := range aggregated {
 		result = append(result, ModelStat{
 			Model:        stat.Model,
 			Calls:        stat.Calls,
@@ -454,9 +459,48 @@ func buildModelStats(stats []store.ModelStat, prices map[string]store.ModelPrice
 			OutputTokens: stat.OutputTokens,
 			CachedTokens: stat.CachedTokens,
 			TotalTokens:  stat.TotalTokens,
-			Cost:         costForStat(stat, prices),
+			Cost:         stat.Cost,
 		})
 	}
+	return result
+}
+
+type aggregatedModelStat struct {
+	Model        string
+	Calls        int64
+	SuccessCalls int64
+	InputTokens  int64
+	OutputTokens int64
+	CachedTokens int64
+	TotalTokens  int64
+	Cost         float64
+}
+
+func aggregateModelStats(stats []store.ModelStat, prices map[string]store.ModelPrice) []aggregatedModelStat {
+	grouped := make(map[string]*aggregatedModelStat, len(stats))
+	order := make([]string, 0, len(stats))
+	for _, stat := range stats {
+		entry := grouped[stat.Model]
+		if entry == nil {
+			entry = &aggregatedModelStat{Model: stat.Model}
+			grouped[stat.Model] = entry
+			order = append(order, stat.Model)
+		}
+		entry.Calls += stat.Calls
+		entry.SuccessCalls += stat.SuccessCalls
+		entry.InputTokens += stat.InputTokens
+		entry.OutputTokens += stat.OutputTokens
+		entry.CachedTokens += stat.CachedTokens
+		entry.TotalTokens += stat.TotalTokens
+		entry.Cost += costForStat(stat, prices)
+	}
+	result := make([]aggregatedModelStat, 0, len(order))
+	for _, model := range order {
+		result = append(result, *grouped[model])
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].Calls > result[j].Calls
+	})
 	return result
 }
 
@@ -481,11 +525,7 @@ func buildChannelShare(stats []store.ChannelModelStat, prices map[string]store.M
 		entry.row.Success += stat.SuccessCalls
 		entry.row.Failure += stat.FailureCalls
 		entry.row.Tokens += stat.TotalTokens
-		entry.row.Cost += pricing.CostForModel(stat.Model, pricing.ModelTokens{
-			InputTokens:  stat.InputTokens,
-			OutputTokens: stat.OutputTokens,
-			CachedTokens: stat.CachedTokens,
-		}, prices)
+		entry.row.Cost += costForChannelStat(stat, prices)
 		if stat.AvgLatencyMS.Valid {
 			entry.latencySum += stat.AvgLatencyMS.Float64
 			entry.latencyN++
@@ -563,26 +603,28 @@ func buildEvents(page store.EventsPage) *EventsResponse {
 	items := make([]EventRow, 0, len(page.Items))
 	for _, item := range page.Items {
 		items = append(items, EventRow{
-			EventHash:            item.EventHash,
-			TimestampMS:          item.TimestampMS,
-			Model:                item.Model,
-			Endpoint:             item.Endpoint,
-			Method:               item.Method,
-			Path:                 item.Path,
-			AuthIndex:            item.AuthIndex,
-			Source:               item.Source,
-			SourceHash:           item.SourceHash,
-			APIKeyHash:           item.APIKeyHash,
-			AccountSnapshot:      item.AccountSnapshot,
-			AuthLabelSnapshot:    item.AuthLabelSnapshot,
-			AuthProviderSnapshot: item.AuthProviderSnapshot,
-			InputTokens:          item.InputTokens,
-			OutputTokens:         item.OutputTokens,
-			CachedTokens:         item.CachedTokens,
-			ReasoningTokens:      item.ReasoningTokens,
-			TotalTokens:          item.TotalTokens,
-			LatencyMS:            nullableInt(item.LatencyMS.Valid, item.LatencyMS.Int64),
-			Failed:               item.Failed,
+			EventHash:             item.EventHash,
+			TimestampMS:           item.TimestampMS,
+			Model:                 item.Model,
+			ResolvedModel:         item.ResolvedModel,
+			Endpoint:              item.Endpoint,
+			Method:                item.Method,
+			Path:                  item.Path,
+			AuthIndex:             item.AuthIndex,
+			Source:                item.Source,
+			SourceHash:            item.SourceHash,
+			APIKeyHash:            item.APIKeyHash,
+			AccountSnapshot:       item.AccountSnapshot,
+			AuthLabelSnapshot:     item.AuthLabelSnapshot,
+			AuthProviderSnapshot:  item.AuthProviderSnapshot,
+			AuthProjectIDSnapshot: item.AuthProjectIDSnapshot,
+			InputTokens:           item.InputTokens,
+			OutputTokens:          item.OutputTokens,
+			CachedTokens:          item.CachedTokens,
+			ReasoningTokens:       item.ReasoningTokens,
+			TotalTokens:           item.TotalTokens,
+			LatencyMS:             nullableInt(item.LatencyMS.Valid, item.LatencyMS.Int64),
+			Failed:                item.Failed,
 		})
 	}
 	return &EventsResponse{Items: items, NextBeforeMS: page.NextBeforeMS, HasMore: page.HasMore}
@@ -597,7 +639,23 @@ func sumCost(stats []store.ModelStat, prices map[string]store.ModelPrice) float6
 }
 
 func costForStat(stat store.ModelStat, prices map[string]store.ModelPrice) float64 {
-	return pricing.CostForModel(stat.Model, pricing.ModelTokens{
+	model := stat.BillingModel
+	if model == "" {
+		model = stat.Model
+	}
+	return pricing.CostForModel(model, pricing.ModelTokens{
+		InputTokens:  stat.InputTokens,
+		OutputTokens: stat.OutputTokens,
+		CachedTokens: stat.CachedTokens,
+	}, prices)
+}
+
+func costForChannelStat(stat store.ChannelModelStat, prices map[string]store.ModelPrice) float64 {
+	model := stat.BillingModel
+	if model == "" {
+		model = stat.Model
+	}
+	return pricing.CostForModel(model, pricing.ModelTokens{
 		InputTokens:  stat.InputTokens,
 		OutputTokens: stat.OutputTokens,
 		CachedTokens: stat.CachedTokens,

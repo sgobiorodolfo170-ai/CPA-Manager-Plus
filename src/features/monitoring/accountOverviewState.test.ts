@@ -59,6 +59,7 @@ const createEventRow = (overrides: Partial<MonitoringEventRow> = {}): Monitoring
   authIndex: overrides.authIndex ?? '1',
   authIndexMasked: overrides.authIndexMasked ?? '1',
   authLabel: overrides.authLabel ?? 'account@example.com',
+  projectId: overrides.projectId ?? 'project-1',
   apiKeyHash: overrides.apiKeyHash ?? 'api-key-hash',
   apiKeyLabel: overrides.apiKeyLabel ?? 'ak********sh',
   apiKeyMasked: overrides.apiKeyMasked ?? 'ak********sh',

@@ -471,6 +471,8 @@ export interface MonitoringAnalyticsEventRow {
   account_snapshot: string;
   auth_label_snapshot: string;
   auth_provider_snapshot: string;
+  auth_project_id_snapshot?: string;
+  resolved_model?: string;
   input_tokens: number;
   output_tokens: number;
   cached_tokens: number;
