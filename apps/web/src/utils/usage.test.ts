@@ -1,13 +1,91 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildCandidateUsageSourceIds,
   calculateCost,
   collectUsageDetails,
   collectUsageDetailsWithEndpoint,
   compatibleCachedTokens,
   extractTotalTokens,
+  normalizeUsageSourceId,
 } from './usage';
 import { maskSensitiveText } from './format';
+
+describe('usage source candidates', () => {
+  it('includes the masked source emitted by CPA for raw upstream keys', () => {
+    expect(buildCandidateUsageSourceIds({ apiKey: 'sk-1234567890abcdef' })).toContain(
+      'm:sk-1...cdef'
+    );
+  });
+
+  it('aligns short secret masking with the backend source contract', () => {
+    expect(buildCandidateUsageSourceIds({ apiKey: 'sk-12345' })).toContain('m:****');
+  });
+
+  it('preserves already-normalized masked usage event sources', () => {
+    const usageData = {
+      apis: {
+        'POST /v1/responses': {
+          models: {
+            'gpt-5.5': {
+              details: [
+                {
+                  timestamp: '2026-05-26T10:00:00Z',
+                  source: 'm:sk-1...cdef',
+                  auth_index: '',
+                  tokens: {},
+                  failed: false,
+                },
+              ],
+            },
+          },
+        },
+      },
+    };
+
+    expect(collectUsageDetails(usageData)[0].source).toBe('m:sk-1...cdef');
+  });
+
+  it('does not trust text-prefixed raw API key sources', () => {
+    const sourceId = buildCandidateUsageSourceIds({ prefix: 'codex' })[0];
+    expect(sourceId).toBe('t:codex');
+
+    const usageData = {
+      apis: {
+        'POST /v1/responses': {
+          models: {
+            'gpt-5.5': {
+              details: [
+                {
+                  timestamp: '2026-05-26T10:00:00Z',
+                  source: 't:sk-1234567890abcdef',
+                  auth_index: '',
+                  tokens: {},
+                  failed: false,
+                },
+              ],
+            },
+          },
+        },
+      },
+    };
+
+    const normalized = collectUsageDetails(usageData)[0].source;
+    expect(normalized).toMatch(/^k:/);
+    expect(normalized).not.toContain('sk-1234567890abcdef');
+  });
+
+  it('does not trust abnormal masked sources that contain raw secrets', () => {
+    const normalized = normalizeUsageSourceId('m:sk-realsecret');
+
+    expect(normalized).toMatch(/^k:/);
+    expect(normalized).not.toContain('sk-realsecret');
+  });
+
+  it('preserves legacy UI-masked source IDs when no raw secret is present', () => {
+    expect(normalizeUsageSourceId('m:sk******ef')).toBe('m:sk******ef');
+  });
+});
 
 describe('usage detail collection', () => {
   it('copies project id snapshots into normalized usage details', () => {

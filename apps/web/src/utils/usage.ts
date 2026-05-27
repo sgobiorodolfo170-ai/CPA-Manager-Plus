@@ -86,6 +86,7 @@ const USAGE_SOURCE_PREFIX_TEXT = 't:';
 const KEY_LIKE_TOKEN_REGEX =
   /(sk-proj-[A-Za-z0-9-_]{6,}|sk-ant-[A-Za-z0-9-_]{6,}|sk-[A-Za-z0-9-_]{6,}|sess-[A-Za-z0-9-_]{6,}|ghp_[A-Za-z0-9]{6,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z-_]{8,}|hf_[A-Za-z0-9]{6,}|pk_[A-Za-z0-9]{6,}|rk_[A-Za-z0-9]{6,})/;
 const MASKED_TOKEN_HINT_REGEX = /^[^\s]{1,24}(\*{2,}|\.{3})[^\s]{1,24}$/;
+const BACKEND_MASKED_SOURCE_REGEX = /^m:(\*{4}|[^\s/\\]{4}\.\.\.[^\s/\\]{4})$/;
 
 const keyFingerprintCache = new Map<string, string>();
 const usageDetailsCache = new WeakMap<object, UsageDetail[]>();
@@ -202,6 +203,14 @@ const extractRawSecretFromText = (text: string): string | null => {
   return bearerValue && looksLikeRawSecret(bearerValue) ? bearerValue : null;
 };
 
+export function maskUsageSecretSource(secret: string): string {
+  const trimmed = String(secret || '').trim();
+  if (!trimmed) return '';
+
+  if (trimmed.length <= 8) return '****';
+  return `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
+}
+
 export function normalizeUsageSourceId(
   value: unknown,
   masker: (val: string) => string = maskApiKey
@@ -210,6 +219,20 @@ export function normalizeUsageSourceId(
     typeof value === 'string' ? value : value === null || value === undefined ? '' : String(value);
   const trimmed = raw.trim();
   if (!trimmed) return '';
+  if (trimmed.startsWith(USAGE_SOURCE_PREFIX_KEY)) return trimmed;
+  if (trimmed.startsWith(USAGE_SOURCE_PREFIX_MASKED)) {
+    if (BACKEND_MASKED_SOURCE_REGEX.test(trimmed)) return trimmed;
+    const maskedValue = trimmed.slice(USAGE_SOURCE_PREFIX_MASKED.length).trim();
+    const extracted = extractRawSecretFromText(maskedValue) || extractRawSecretFromText(trimmed);
+    return extracted
+      ? `${USAGE_SOURCE_PREFIX_KEY}${fnv1a64Hex(extracted)}`
+      : trimmed;
+  }
+  if (trimmed.startsWith(USAGE_SOURCE_PREFIX_TEXT)) {
+    const textSource = trimmed.slice(USAGE_SOURCE_PREFIX_TEXT.length).trim();
+    const extracted = extractRawSecretFromText(textSource);
+    return extracted ? `${USAGE_SOURCE_PREFIX_KEY}${fnv1a64Hex(extracted)}` : trimmed;
+  }
 
   const extracted = extractRawSecretFromText(trimmed);
   if (extracted) return `${USAGE_SOURCE_PREFIX_KEY}${fnv1a64Hex(extracted)}`;
@@ -230,6 +253,8 @@ export function buildCandidateUsageSourceIds(input: {
   const apiKey = input.apiKey?.trim();
   if (apiKey) {
     result.push(normalizeUsageSourceId(apiKey));
+    result.push(`${USAGE_SOURCE_PREFIX_MASKED}${maskUsageSecretSource(apiKey)}`);
+    result.push(`${USAGE_SOURCE_PREFIX_MASKED}${maskApiKey(apiKey)}`);
     result.push(`${USAGE_SOURCE_PREFIX_TEXT}${maskApiKey(apiKey)}`);
   }
 

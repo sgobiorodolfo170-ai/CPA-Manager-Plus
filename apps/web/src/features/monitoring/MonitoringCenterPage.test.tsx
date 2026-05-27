@@ -108,7 +108,7 @@ describe('MonitoringCenterPage account card', () => {
         },
         t
       ).primary
-    ).toBe('openai');
+    ).toBe('relay.example.com');
     expect(
       buildRealtimeSourceDisplay(
         {
@@ -117,7 +117,7 @@ describe('MonitoringCenterPage account card', () => {
         },
         t
       ).meta
-    ).toBe('Host: relay.example.com');
+    ).toBe('Provider: openai');
 
     expect(
       buildRealtimeSourceDisplay(
@@ -128,6 +128,24 @@ describe('MonitoringCenterPage account card', () => {
         t
       ).meta
     ).toBe('alice@example.com');
+  });
+
+  it('prefers resolved hosts over generic provider labels', () => {
+    const display = buildRealtimeSourceDisplay(
+      {
+        account: '',
+        accountMasked: '',
+        authLabel: '',
+        channel: 'codex',
+        channelHost: 'api.freemodel.dev',
+        provider: 'codex',
+        sourceMasked: 'm:fe_o...c68c',
+      },
+      t
+    );
+
+    expect(display.primary).toBe('api.freemodel.dev');
+    expect(display.meta).toBe('Provider: codex');
   });
 
   it('renders bulk action buttons for mixed account auth state', () => {

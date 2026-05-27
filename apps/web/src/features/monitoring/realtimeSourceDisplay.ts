@@ -6,6 +6,20 @@ const hasReadableRealtimeValue = (value: string | null | undefined) => {
   return Boolean(trimmed) && trimmed !== '-';
 };
 
+const GENERIC_PROVIDER_LABELS = new Set([
+  'codex',
+  'openai',
+  'openai-compatibility',
+  'gemini',
+  'claude',
+  'vertex',
+]);
+
+const isGenericProviderLabel = (value: string) =>
+  GENERIC_PROVIDER_LABELS.has(value.trim().toLowerCase());
+
+const firstReadable = (...values: string[]) => values.find(hasReadableRealtimeValue)?.trim() || '';
+
 export const buildRealtimeSourceDisplay = (
   row: Pick<
     MonitoringEventRow,
@@ -26,7 +40,15 @@ export const buildRealtimeSourceDisplay = (
     .find(hasReadableRealtimeValue)
     ?.trim();
   const source = hasReadableRealtimeValue(row.sourceMasked) ? row.sourceMasked.trim() : '';
-  const primary = channel || provider || host || account || source || '-';
+  const primary = firstReadable(
+    channel && !isGenericProviderLabel(channel) ? channel : '',
+    host,
+    source,
+    provider && !isGenericProviderLabel(provider) ? provider : '',
+    account || '',
+    channel,
+    provider
+  ) || '-';
   const metaCandidate = [
     { value: provider, label: t('monitoring.filter_provider') },
     { value: host, label: t('monitoring.column_host') },
