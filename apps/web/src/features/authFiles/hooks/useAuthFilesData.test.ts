@@ -147,6 +147,51 @@ describe('buildPastedAuthJsonPayload', () => {
       access_token: 'plain-access-token',
     });
   });
+
+  it('derives a default file name for multi-account sub2api auth JSON', () => {
+    const result = buildPastedAuthJsonPayload(
+      'sub2api',
+      'codex-account.json',
+      JSON.stringify({
+        exported_at: '2026-06-01T12:00:00.000Z',
+        proxies: [],
+        accounts: [
+          {
+            name: 'First OpenAI',
+            platform: 'openai',
+            type: 'oauth',
+            credentials: {
+              access_token: 'first-access-token',
+              email: 'first@example.com',
+            },
+          },
+          {
+            name: 'Second OpenAI',
+            platform: 'openai',
+            type: 'oauth',
+            credentials: {
+              access_token: 'second-access-token',
+              email: 'second@example.com',
+            },
+          },
+        ],
+      })
+    );
+
+    expect(result.resolvedFileName).toBe('sub2api-codex-accounts.codex.json');
+    expect(result.authJson).toEqual([
+      expect.objectContaining({
+        type: 'codex',
+        email: 'first@example.com',
+        access_token: 'first-access-token',
+      }),
+      expect.objectContaining({
+        type: 'codex',
+        email: 'second@example.com',
+        access_token: 'second-access-token',
+      }),
+    ]);
+  });
 });
 
 describe('useAuthFilesData savePastedAuthJson', () => {
@@ -188,10 +233,60 @@ describe('useAuthFilesData savePastedAuthJson', () => {
       access_token: 'existing-access-token',
     };
 
-    const savedName = await hook.getCurrent().savePastedAuthJson('cpa', 'custom-auth.json', JSON.stringify(cpaInput));
+    const savedName = await hook
+      .getCurrent()
+      .savePastedAuthJson('cpa', 'custom-auth.json', JSON.stringify(cpaInput));
 
     expect(savedName).toBe('custom-auth.json');
     expect(mocks.saveJsonObject).toHaveBeenCalledWith('custom-auth.json', cpaInput);
+    expect(mocks.list).toHaveBeenCalledTimes(1);
+    hook.unmount();
+  });
+
+  it('saves converted sub2api JSON as a CPA auth array', async () => {
+    const hook = mountUseAuthFilesData();
+    const sub2apiInput = JSON.stringify({
+      exported_at: '2026-06-01T12:00:00.000Z',
+      proxies: [],
+      accounts: [
+        {
+          name: 'First OpenAI',
+          platform: 'openai',
+          type: 'oauth',
+          credentials: {
+            access_token: 'first-access-token',
+            email: 'first@example.com',
+          },
+        },
+        {
+          name: 'Second OpenAI',
+          platform: 'openai',
+          type: 'oauth',
+          credentials: {
+            access_token: 'second-access-token',
+            email: 'second@example.com',
+          },
+        },
+      ],
+    });
+
+    const savedName = await hook
+      .getCurrent()
+      .savePastedAuthJson('sub2api', 'codex-account.json', sub2apiInput);
+
+    expect(savedName).toBe('sub2api-codex-accounts.codex.json');
+    expect(mocks.saveJsonObject).toHaveBeenCalledWith('sub2api-codex-accounts.codex.json', [
+      expect.objectContaining({
+        type: 'codex',
+        email: 'first@example.com',
+        access_token: 'first-access-token',
+      }),
+      expect.objectContaining({
+        type: 'codex',
+        email: 'second@example.com',
+        access_token: 'second-access-token',
+      }),
+    ]);
     expect(mocks.list).toHaveBeenCalledTimes(1);
     hook.unmount();
   });
@@ -298,7 +393,9 @@ describe('useAuthFilesData savePastedAuthJson', () => {
     const hook = mountUseAuthFilesData();
     const invalidInput = JSON.stringify({ foo: 'bar' });
 
-    await expect(hook.getCurrent().savePastedAuthJson('cpa', 'custom-auth.json', invalidInput)).rejects.toThrow();
+    await expect(
+      hook.getCurrent().savePastedAuthJson('cpa', 'custom-auth.json', invalidInput)
+    ).rejects.toThrow();
 
     expect(mocks.saveJsonObject).not.toHaveBeenCalled();
     expect(mocks.showNotification).not.toHaveBeenCalled();
@@ -317,9 +414,9 @@ describe('useAuthFilesData savePastedAuthJson', () => {
       new Error('upload failed for token sk-secret-value')
     );
 
-    await expect(hook.getCurrent().savePastedAuthJson('cpa', 'custom-auth.json', validInput)).rejects.toThrow(
-      'notification.save_failed'
-    );
+    await expect(
+      hook.getCurrent().savePastedAuthJson('cpa', 'custom-auth.json', validInput)
+    ).rejects.toThrow('notification.save_failed');
 
     expect(mocks.showNotification).not.toHaveBeenCalled();
     expect(mocks.list).not.toHaveBeenCalled();
@@ -397,12 +494,12 @@ describe('useAuthFilesData savePastedAuthJson', () => {
     });
     mocks.saveJsonObject.mockRejectedValueOnce(new Error('upload failed'));
 
-    await expect(hook.getCurrent().savePastedAuthJson('cpa', 'custom-auth.json', validInput)).rejects.toThrow(
-      'notification.save_failed'
-    );
-    await expect(hook.getCurrent().savePastedAuthJson('cpa', 'custom-auth.json', validInput)).resolves.toBe(
-      'custom-auth.json'
-    );
+    await expect(
+      hook.getCurrent().savePastedAuthJson('cpa', 'custom-auth.json', validInput)
+    ).rejects.toThrow('notification.save_failed');
+    await expect(
+      hook.getCurrent().savePastedAuthJson('cpa', 'custom-auth.json', validInput)
+    ).resolves.toBe('custom-auth.json');
 
     expect(mocks.saveJsonObject).toHaveBeenCalledTimes(2);
     expect(mocks.list).toHaveBeenCalledTimes(1);

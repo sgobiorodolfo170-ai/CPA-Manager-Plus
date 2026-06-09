@@ -9,7 +9,9 @@ import { MAX_AUTH_FILE_SIZE } from '@/utils/constants';
 import { downloadBlob } from '@/utils/download';
 import {
   convertAuthJsonInput,
+  getDefaultSub2ApiAuthFileName,
   getDefaultSessionAuthFileName,
+  type AuthJsonConversionResult,
   type AuthJsonInputType,
 } from '@/features/authFiles/sessionAuthConverter';
 import {
@@ -68,7 +70,7 @@ export type UseAuthFilesDataResult = {
 };
 
 type PastedAuthJsonPayload = {
-  authJson: Record<string, unknown>;
+  authJson: AuthJsonConversionResult;
   resolvedFileName: string;
 };
 
@@ -80,8 +82,10 @@ export const buildPastedAuthJsonPayload = (
   const authJson = convertAuthJsonInput(jsonText, type);
   const resolvedFileName =
     type === 'session' && fileName === 'codex-account.json'
-      ? getDefaultSessionAuthFileName(authJson)
-      : fileName;
+      ? getDefaultSessionAuthFileName(authJson as Record<string, unknown>)
+      : type === 'sub2api' && fileName === 'codex-account.json'
+        ? getDefaultSub2ApiAuthFileName(authJson)
+        : fileName;
   return {
     authJson,
     resolvedFileName,
