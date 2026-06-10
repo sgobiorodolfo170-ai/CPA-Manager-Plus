@@ -143,6 +143,44 @@ const normalizeBatchUploadResponse = (
   };
 };
 
+const readUploadErrorMessage = (err: unknown): string => {
+  if (err instanceof Error && err.message.trim()) return err.message;
+  if (typeof err === 'string' && err.trim()) return err.trim();
+  return 'Upload failed';
+};
+
+const uploadSingleAuthFile = async (file: File): Promise<AuthFileBatchUploadResult> => {
+  const formData = new FormData();
+  formData.append('file', file, file.name);
+  const payload = await apiClient.postForm<AuthFileBatchUploadResponse>('/auth-files', formData);
+  return normalizeBatchUploadResponse(payload, [file.name]);
+};
+
+const mergeBatchUploadResults = (
+  results: AuthFileBatchUploadResult[],
+  requestedNames: string[]
+): AuthFileBatchUploadResult => {
+  const uploaded = results.reduce((total, result) => total + Math.max(0, result.uploaded), 0);
+  const files = results.flatMap((result) => result.files);
+  const failed = results.flatMap((result) => result.failed);
+  const hasFailureStatus = results.some((result) => {
+    const status = result.status.trim().toLowerCase();
+    return status === 'error' || status === 'failed' || status === 'partial';
+  });
+
+  return {
+    status:
+      failed.length > 0 || hasFailureStatus || uploaded < requestedNames.length
+        ? uploaded > 0
+          ? 'partial'
+          : 'error'
+        : 'ok',
+    uploaded,
+    files,
+    failed,
+  };
+};
+
 const normalizeBatchDeleteResponse = (
   payload: AuthFileBatchDeleteResponse | undefined,
   requestedNames: string[]
@@ -614,12 +652,24 @@ export const authFilesApi = {
       return { status: 'ok', uploaded: 0, files: [], failed: [] };
     }
 
-    const formData = new FormData();
-    files.forEach((file) => {
-      formData.append('file', file, file.name);
-    });
-    const payload = await apiClient.postForm<AuthFileBatchUploadResponse>('/auth-files', formData);
-    return normalizeBatchUploadResponse(payload, requestedNames);
+    if (files.length === 1) {
+      return uploadSingleAuthFile(files[0]);
+    }
+
+    const results: AuthFileBatchUploadResult[] = [];
+    for (const file of files) {
+      try {
+        results.push(await uploadSingleAuthFile(file));
+      } catch (err) {
+        results.push({
+          status: 'error',
+          uploaded: 0,
+          files: [],
+          failed: [{ name: file.name, error: readUploadErrorMessage(err) }],
+        });
+      }
+    }
+    return mergeBatchUploadResults(results, requestedNames);
   },
 
   upload: (file: File) => authFilesApi.uploadFiles([file]),
