@@ -115,7 +115,7 @@ func (w *AccountActionCandidateWorker) handleCandidate(ctx context.Context, cand
 		log.Printf("[account-action] failed to upsert pending candidate for auth file %q: %v", candidate.FileName, err)
 		return
 	}
-	log.Printf("[account-action] saved pending %s candidate %d for auth file %q", candidate.ActionType, item.ID, candidate.FileName)
+	log.Printf("[account-action] saved pending %s candidate %d for auth file %q authIndex=%q provider=%q hitCount=%d", candidate.ActionType, item.ID, candidate.FileName, item.AuthIndex, item.Provider, item.HitCount)
 	w.maybeAutoDisable(ctx, item, candidate)
 }
 
@@ -124,21 +124,23 @@ func (w *AccountActionCandidateWorker) maybeAutoDisable(ctx context.Context, ite
 		return
 	}
 	if !accountActionAutoDisableEligible(item.ActionType) {
-		log.Printf("[account-action] pending candidate %d action=%q is not eligible for auto-disable", item.ID, item.ActionType)
+		log.Printf("[account-action] auto-disable skipped for pending candidate %d authFile=%q action=%q reason=ineligible_action", item.ID, item.AuthFileName, item.ActionType)
 		return
 	}
+	log.Printf("[account-action] auto-disable eligibility confirmed for pending candidate %d authFile=%q action=%q", item.ID, item.AuthFileName, item.ActionType)
 	baseURL := strings.TrimSpace(candidate.BaseURL)
 	managementKey := strings.TrimSpace(candidate.ManagementKey)
 	if baseURL == "" || managementKey == "" {
-		_ = w.store.RecordAccountActionCandidateFailure(ctx, item.ID, "CPA runtime config is unavailable for auto-disable")
-		log.Printf("[account-action] pending candidate %d saved, but runtime config is unavailable for auto-disable", item.ID)
+		reason := "CPA runtime config is unavailable for auto-disable"
+		_ = w.store.RecordAccountActionCandidateFailure(ctx, item.ID, reason)
+		log.Printf("[account-action] auto-disable skipped for pending candidate %d authFile=%q reason=%s baseURLSet=%t managementKeySet=%t", item.ID, item.AuthFileName, reason, baseURL != "", managementKey != "")
 		return
 	}
 	client := cpaauthfiles.New(nil)
 	files, err := client.Fetch(ctx, baseURL, managementKey)
 	if err != nil {
 		_ = w.store.RecordAccountActionCandidateFailure(ctx, item.ID, err.Error())
-		log.Printf("[account-action] pending candidate %d saved, but auth file verification failed for %q: %v", item.ID, item.AuthFileName, err)
+		log.Printf("[account-action] auto-disable verification failed for pending candidate %d authFile=%q: %v", item.ID, item.AuthFileName, err)
 		return
 	}
 	current, err := cpaauthfiles.VerifyIdentity(files, cpaauthfiles.Identity{
@@ -151,19 +153,19 @@ func (w *AccountActionCandidateWorker) maybeAutoDisable(ctx context.Context, ite
 	if err != nil {
 		reason := "current CPA auth file identity verification failed: " + err.Error()
 		_ = w.store.RecordAccountActionCandidateFailure(ctx, item.ID, reason)
-		log.Printf("[account-action] pending candidate %d saved, but auth file identity verification failed for %q: %v; skip auto-disable", item.ID, item.AuthFileName, err)
+		log.Printf("[account-action] auto-disable skipped for pending candidate %d authFile=%q reason=identity_verification_failed detail=%v", item.ID, item.AuthFileName, err)
 		return
 	}
 	if current.Disabled {
-		log.Printf("[account-action] pending candidate %d saved; auth file %q already disabled", item.ID, item.AuthFileName)
+		log.Printf("[account-action] auto-disable skipped for pending candidate %d authFile=%q reason=already_disabled", item.ID, item.AuthFileName)
 		return
 	}
 	if err := client.PatchDisabled(ctx, baseURL, managementKey, item.AuthFileName, true); err != nil {
 		_ = w.store.RecordAccountActionCandidateFailure(ctx, item.ID, err.Error())
-		log.Printf("[account-action] pending candidate %d saved, but failed to auto-disable auth file %q: %v", item.ID, item.AuthFileName, err)
+		log.Printf("[account-action] auto-disable patch failed for pending candidate %d authFile=%q: %v", item.ID, item.AuthFileName, err)
 		return
 	}
-	log.Printf("[account-action] auto-disabled auth file %q for pending %s candidate %d", item.AuthFileName, item.ActionType, item.ID)
+	log.Printf("[account-action] auto-disable patch succeeded for pending candidate %d authFile=%q action=%q", item.ID, item.AuthFileName, item.ActionType)
 }
 
 func accountActionAutoDisableEligible(actionType string) bool {

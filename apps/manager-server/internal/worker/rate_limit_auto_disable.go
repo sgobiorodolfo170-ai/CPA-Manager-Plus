@@ -82,7 +82,9 @@ func (w *RateLimitAutoDisableWorker) UpdateRuntimeConfig(ctx context.Context, cf
 	if baseURL == "" || managementKey == "" {
 		return
 	}
-	w.setRuntimeConfig(baseURL, managementKey)
+	if w.setRuntimeConfig(baseURL, managementKey) {
+		log.Printf("[quota-auto-disable] runtime config synced baseURL=%q managementKeySet=%t", baseURL, managementKey != "")
+	}
 	w.enableDue(ctx, time.Now())
 }
 
@@ -98,7 +100,9 @@ func (w *RateLimitAutoDisableWorker) HandleUsageEvents(ctx context.Context, cfg 
 	if baseURL == "" || managementKey == "" {
 		return
 	}
-	w.setRuntimeConfig(baseURL, managementKey)
+	if w.setRuntimeConfig(baseURL, managementKey) {
+		log.Printf("[quota-auto-disable] runtime config synced baseURL=%q managementKeySet=%t", baseURL, managementKey != "")
+	}
 	if len(events) == 0 {
 		return
 	}
@@ -139,11 +143,15 @@ func (w *RateLimitAutoDisableWorker) run(ctx context.Context) {
 	}
 }
 
-func (w *RateLimitAutoDisableWorker) setRuntimeConfig(baseURL string, managementKey string) {
+func (w *RateLimitAutoDisableWorker) setRuntimeConfig(baseURL string, managementKey string) bool {
+	baseURL = strings.TrimSpace(baseURL)
+	managementKey = strings.TrimSpace(managementKey)
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.baseURL = strings.TrimSpace(baseURL)
-	w.managementKey = strings.TrimSpace(managementKey)
+	changed := w.baseURL != baseURL || w.managementKey != managementKey
+	w.baseURL = baseURL
+	w.managementKey = managementKey
+	return changed
 }
 
 func (w *RateLimitAutoDisableWorker) runtimeConfig() (string, string) {
@@ -271,11 +279,15 @@ func (w *RateLimitAutoDisableWorker) enableDue(ctx context.Context, now time.Tim
 
 func (w *RateLimitAutoDisableWorker) recoverCooldown(ctx context.Context, baseURL string, managementKey string, item store.QuotaCooldown, now time.Time) {
 	if item.Owner != model.QuotaCooldownOwnerUsage429 {
-		_ = w.store.MarkQuotaCooldownSkipped(ctx, item.ID, "unknown owner")
+		reason := "unknown owner"
+		_ = w.store.MarkQuotaCooldownSkipped(ctx, item.ID, reason)
+		log.Printf("[quota-auto-disable] skip cooldown recovery id=%d authFile=%q reason=%s owner=%q", item.ID, item.AuthFileName, reason, item.Owner)
 		return
 	}
 	if item.PreDisabledState {
-		_ = w.store.MarkQuotaCooldownSkipped(ctx, item.ID, "pre-disabled before CPAMP action")
+		reason := "pre-disabled before CPAMP action"
+		_ = w.store.MarkQuotaCooldownSkipped(ctx, item.ID, reason)
+		log.Printf("[quota-auto-disable] skip cooldown recovery id=%d authFile=%q reason=%s", item.ID, item.AuthFileName, reason)
 		return
 	}
 	current, ok, err := w.currentAuthFile(ctx, baseURL, managementKey, item.AuthFileName, item.AuthIndex)
