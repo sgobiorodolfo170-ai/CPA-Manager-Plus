@@ -38,6 +38,7 @@ type QuotaCooldown = model.QuotaCooldown
 type QuotaCooldownUpsert = model.QuotaCooldownUpsert
 type AccountActionCandidate = model.AccountActionCandidate
 type AccountActionCandidateUpsert = model.AccountActionCandidateUpsert
+type AutomationSettings = model.AutomationSettings
 
 var DefaultCodexInspectionConfig = model.DefaultCodexInspectionConfig
 var NormalizeCodexInspectionConfig = model.NormalizeCodexInspectionConfig
@@ -113,6 +114,14 @@ func (s *Store) SaveManagerConfig(ctx context.Context, cfg ManagerConfig) error 
 
 func (s *Store) LoadManagerConfig(ctx context.Context) (ManagerConfig, bool, error) {
 	return s.Settings.LoadManagerConfig(ctx)
+}
+
+func (s *Store) SaveAutomationSettings(ctx context.Context, settings AutomationSettings) (AutomationSettings, error) {
+	return s.Settings.SaveAutomationSettings(ctx, settings)
+}
+
+func (s *Store) LoadAutomationSettings(ctx context.Context) (AutomationSettings, bool, error) {
+	return s.Settings.LoadAutomationSettings(ctx)
 }
 
 func (s *Store) SaveAdminCredential(ctx context.Context, credential AdminCredential) error {
