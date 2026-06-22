@@ -221,8 +221,11 @@ const buildRealtimeTokenSummary = (row: MonitoringEventRow, t: TFunction) => {
   const parts = [
     `I ${formatCompactNumber(row.inputTokens)}`,
     `O ${formatCompactNumber(row.outputTokens)}`,
-    `C ${formatCompactNumber(row.cachedTokens)}`,
   ];
+  if (row.reasoningTokens > 0) {
+    parts.push(`R ${formatCompactNumber(row.reasoningTokens)}`);
+  }
+  parts.push(`C ${formatCompactNumber(row.cachedTokens)}`);
   if (row.cacheCreationTokens > 0) {
     parts.push(
       `${shortLabel(t, 'monitoring.cache_creation_tokens_short', 'monitoring.cache_creation_tokens', 'Create')} ${formatCompactNumber(row.cacheCreationTokens)}`
