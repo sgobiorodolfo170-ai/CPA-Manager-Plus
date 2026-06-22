@@ -94,22 +94,6 @@ vi.mock('@/components/common/PageTransitionLayer', () => ({
   usePageTransitionLayer: () => ({ status: 'current' }),
 }));
 
-vi.mock('@/hooks/usePanelFeatureAvailability', () => ({
-  usePanelFeatureAvailability: () => ({
-    checking: false,
-    panelHostMode: 'external_panel',
-    panelBase: '',
-    managerServiceBase: '',
-    managerServiceAvailable: false,
-    requestMonitoringAvailable: false,
-    modelPricesAvailable: false,
-    serverCodexInspectionAvailable: false,
-    dockerSetupAvailable: false,
-    externalManagerConfigAvailable: false,
-    reason: 'service_not_configured',
-  }),
-}));
-
 vi.mock('@/utils/clipboard', () => ({
   copyToClipboard: vi.fn(async () => undefined),
 }));
