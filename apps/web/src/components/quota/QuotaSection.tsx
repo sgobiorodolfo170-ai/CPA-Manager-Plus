@@ -18,7 +18,7 @@ import {
 import { QuotaCard } from './QuotaCard';
 import type { QuotaStatusState } from './QuotaCard';
 import { useQuotaLoader } from './useQuotaLoader';
-import type { QuotaConfig, QuotaSortMode } from './quotaConfigs';
+import { resolveQuotaDisplayState, type QuotaConfig, type QuotaSortMode } from './quotaConfigs';
 import { resolveQuotaAccountDisplayText } from './quotaDisplay';
 import {
   DEFAULT_QUOTA_ACCOUNT_DISPLAY_MODE,
@@ -192,21 +192,12 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   const getDisplayQuota = useCallback(
     (file: AuthFileItem): TState | undefined => {
       const activeQuota = quota[file.name];
-      if (activeQuota && activeQuota.status !== 'idle' && activeQuota.status !== 'error') {
-        return activeQuota;
-      }
-      if (
-        activeQuota?.status === 'error' &&
-        (activeQuota as { errorStatus?: number | null }).errorStatus === 401
-      ) {
-        return activeQuota;
-      }
       const observedQuota = config.buildObservedState?.(
         file,
         getHighConfidenceUsageHeaderSnapshotForAuthFile(headerSnapshotLookup, file),
         t
       );
-      return observedQuota ?? activeQuota;
+      return resolveQuotaDisplayState(activeQuota, observedQuota);
     },
     [config, headerSnapshotLookup, quota, t]
   );

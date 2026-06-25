@@ -230,6 +230,38 @@ const getCodexSearchText = (
   ];
 };
 
+type DisplayQuotaState = {
+  status?: 'idle' | 'loading' | 'success' | 'error';
+  errorStatus?: number | null;
+  fetchedAtMs?: number;
+  observedAtMs?: number;
+};
+
+const readFiniteTimestamp = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null;
+
+export const resolveQuotaDisplayState = <TState extends DisplayQuotaState>(
+  activeQuota: TState | undefined,
+  observedQuota: TState | undefined
+): TState | undefined => {
+  if (activeQuota && activeQuota.status !== 'idle' && activeQuota.status !== 'error') {
+    if (activeQuota.status === 'success' && observedQuota?.status === 'success') {
+      const fetchedAtMs = readFiniteTimestamp(activeQuota.fetchedAtMs);
+      const observedAtMs = readFiniteTimestamp(observedQuota.observedAtMs);
+      if (fetchedAtMs !== null && observedAtMs !== null && observedAtMs > fetchedAtMs) {
+        return observedQuota;
+      }
+    }
+    return activeQuota;
+  }
+
+  if (activeQuota?.status === 'error' && activeQuota.errorStatus === 401) {
+    return activeQuota;
+  }
+
+  return observedQuota ?? activeQuota;
+};
+
 export const buildObservedCodexQuotaState = (
   file: AuthFileItem,
   snapshot: UsageHeaderSnapshot | undefined,

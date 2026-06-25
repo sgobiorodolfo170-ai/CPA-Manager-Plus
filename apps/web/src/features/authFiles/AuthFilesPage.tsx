@@ -24,7 +24,7 @@ import { Select } from '@/components/ui/Select';
 import { IconFilterAll, IconSearch } from '@/components/ui/icons';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
-import { buildObservedCodexQuotaState } from '@/components/quota';
+import { buildObservedCodexQuotaState, resolveQuotaDisplayState } from '@/components/quota';
 import { copyToClipboard } from '@/utils/clipboard';
 import { resolveAuthProvider } from '@/utils/quota';
 import {
@@ -645,18 +645,12 @@ export function AuthFilesPage() {
     (file: AuthFileItem): CodexQuotaState | undefined => {
       if (resolveAuthProvider(file) !== 'codex') return undefined;
       const activeQuota = codexQuota[file.name];
-      if (activeQuota && activeQuota.status !== 'idle' && activeQuota.status !== 'error') {
-        return activeQuota;
-      }
-      if (activeQuota?.status === 'error' && activeQuota.errorStatus === 401) {
-        return activeQuota;
-      }
       const observedQuota = buildObservedCodexQuotaState(
         file,
         getHighConfidenceUsageHeaderSnapshotForAuthFile(headerSnapshotLookup, file),
         t
       );
-      return observedQuota ?? activeQuota;
+      return resolveQuotaDisplayState(activeQuota, observedQuota);
     },
     [codexQuota, headerSnapshotLookup, t]
   );
