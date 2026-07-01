@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
+    getSubscription: vi.fn(),
     request: vi.fn(),
   },
 }));
@@ -15,7 +16,15 @@ vi.mock('@/services/api/apiCall', () => ({
     `${result.statusCode} ${result.bodyText ?? ''}`.trim(),
 }));
 
+vi.mock('@/services/api/antigravitySubscription', () => ({
+  antigravitySubscriptionApi: {
+    get: mocks.getSubscription,
+  },
+}));
+
 import {
+  ANTIGRAVITY_AVAILABLE_MODELS_URLS,
+  ANTIGRAVITY_QUOTA_SUMMARY_URLS,
   ANTIGRAVITY_USER_AGENT,
   CODEX_RATE_LIMIT_RESET_CREDITS_URL,
   CODEX_USAGE_URL,
@@ -25,6 +34,8 @@ import { fetchAntigravityQuota, fetchCodexQuota } from './providerRequests';
 const t = ((key: string) => key) as TFunction;
 
 beforeEach(() => {
+  mocks.getSubscription.mockReset();
+  mocks.getSubscription.mockResolvedValue(null);
   mocks.request.mockReset();
 });
 
@@ -137,6 +148,119 @@ describe('fetchCodexQuota', () => {
 });
 
 describe('fetchAntigravityQuota', () => {
+  it('uses quota summary data and includes subscription plan data', async () => {
+    mocks.getSubscription.mockResolvedValue({
+      plan: 'pro',
+      tierName: 'Antigravity Pro',
+      tierId: 'g1-pro-tier',
+    });
+    mocks.request.mockResolvedValueOnce({
+      statusCode: 200,
+      hasStatusCode: true,
+      header: {},
+      bodyText: '',
+      body: {
+        groups: [
+          {
+            displayName: 'Gemini models',
+            buckets: [
+              {
+                bucketId: 'gemini-weekly',
+                displayName: 'Weekly limit',
+                window: 'weekly',
+                remainingFraction: 0.7,
+                resetTime: '2026-07-02T00:00:00Z',
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const result = await fetchAntigravityQuota(
+      {
+        name: 'antigravity.json',
+        type: 'antigravity',
+        authIndex: 'ag-1',
+        project_id: 'project-1',
+      },
+      t
+    );
+
+    expect(mocks.request).toHaveBeenCalledTimes(1);
+    expect(mocks.request.mock.calls[0][0]).toMatchObject({
+      url: ANTIGRAVITY_QUOTA_SUMMARY_URLS[0],
+    });
+    expect(mocks.getSubscription).toHaveBeenCalledWith('ag-1');
+    expect(result.subscription).toEqual({
+      plan: 'pro',
+      tierName: 'Antigravity Pro',
+      tierId: 'g1-pro-tier',
+    });
+    expect(result.groups[0]).toMatchObject({
+      label: 'Gemini models',
+      buckets: [
+        {
+          label: 'Weekly limit',
+          remainingFraction: 0.7,
+        },
+      ],
+    });
+  });
+
+  it('falls back to available models when summary endpoints have no usable data', async () => {
+    ANTIGRAVITY_QUOTA_SUMMARY_URLS.forEach(() => {
+      mocks.request.mockResolvedValueOnce({
+        statusCode: 404,
+        hasStatusCode: true,
+        header: {},
+        bodyText: 'not found',
+        body: null,
+      });
+    });
+    mocks.request.mockResolvedValueOnce({
+      statusCode: 200,
+      hasStatusCode: true,
+      header: {},
+      bodyText: '',
+      body: {
+        models: {
+          'claude-sonnet-4-6': {
+            displayName: 'Claude Sonnet 4.6',
+            quotaInfo: { remainingFraction: 0.5 },
+            apiProvider: 'API_PROVIDER_ANTHROPIC_VERTEX',
+          },
+          'gemini-3-pro-high': {
+            displayName: 'Gemini 3 Pro',
+            quotaInfo: { remainingFraction: 0.8 },
+            apiProvider: 'API_PROVIDER_GOOGLE_GEMINI',
+          },
+        },
+        agentModelSorts: [
+          {
+            groups: [{ modelIds: ['gemini-3-pro-high'] }],
+          },
+        ],
+      },
+    });
+
+    const result = await fetchAntigravityQuota(
+      {
+        name: 'antigravity.json',
+        type: 'antigravity',
+        authIndex: 'ag-1',
+        project_id: 'project-1',
+      },
+      t
+    );
+
+    expect(mocks.request).toHaveBeenCalledTimes(ANTIGRAVITY_QUOTA_SUMMARY_URLS.length + 1);
+    expect(mocks.request.mock.calls[mocks.request.mock.calls.length - 1]?.[0]).toMatchObject({
+      url: ANTIGRAVITY_AVAILABLE_MODELS_URLS[0],
+    });
+    expect(result.groups.map((group) => group.id)).toEqual(['claude-gpt', 'gemini']);
+  });
+
   it('sends the generated Antigravity user agent', async () => {
     mocks.request.mockResolvedValue({
       statusCode: 403,

@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next';
 import type {
   AntigravityQuotaGroup,
+  AntigravityQuotaSubscription,
   AntigravityQuotaSummaryPayload,
   AuthFileItem,
   ClaudeExtraUsage,
@@ -15,9 +16,14 @@ import type {
   XaiBillingSummary,
 } from '@/types';
 import { apiCallApi, getApiCallErrorMessage } from '@/services/api/apiCall';
+import {
+  antigravitySubscriptionApi,
+  type AntigravitySubscriptionSummary,
+} from '@/services/api/antigravitySubscription';
 import { authFilesApi } from '@/services/api/authFiles';
 import {
-  ANTIGRAVITY_QUOTA_URLS,
+  ANTIGRAVITY_AVAILABLE_MODELS_URLS,
+  ANTIGRAVITY_QUOTA_SUMMARY_URLS,
   ANTIGRAVITY_REQUEST_HEADERS,
   CLAUDE_PROFILE_URL,
   CLAUDE_REQUEST_HEADERS,
@@ -68,7 +74,41 @@ export type ClaudeQuotaData = {
 
 export type AntigravityQuotaData = {
   groups: AntigravityQuotaGroup[];
+  subscription?: AntigravityQuotaSubscription | null;
   serverTimeOffsetMs: number | null;
+};
+
+const antigravitySubscriptionRequests = new Map<
+  string,
+  Promise<AntigravityQuotaSubscription | null>
+>();
+
+const toAntigravityQuotaSubscription = (
+  summary: AntigravitySubscriptionSummary | null
+): AntigravityQuotaSubscription | null => {
+  if (!summary) return null;
+  return {
+    plan: summary.plan,
+    tierName: summary.tierName,
+    tierId: summary.tierId,
+  };
+};
+
+const fetchAntigravityQuotaSubscription = (
+  authIndex: string
+): Promise<AntigravityQuotaSubscription | null> => {
+  const existing = antigravitySubscriptionRequests.get(authIndex);
+  if (existing) return existing;
+
+  const request = antigravitySubscriptionApi
+    .get(authIndex)
+    .then(toAntigravityQuotaSubscription)
+    .catch(() => null)
+    .finally(() => {
+      antigravitySubscriptionRequests.delete(authIndex);
+    });
+  antigravitySubscriptionRequests.set(authIndex, request);
+  return request;
 };
 
 export const resolveAntigravityProjectId = async (file: AuthFileItem): Promise<string> => {
@@ -150,13 +190,14 @@ export const fetchAntigravityQuota = async (
 
   const projectId = await resolveAntigravityProjectId(file);
   const requestBody = JSON.stringify({ project: projectId });
+  const subscriptionPromise = fetchAntigravityQuotaSubscription(authIndex);
 
   let lastError = '';
   let lastStatus: number | undefined;
   let priorityStatus: number | undefined;
   let hadSuccess = false;
 
-  for (const url of ANTIGRAVITY_QUOTA_URLS) {
+  for (const url of [...ANTIGRAVITY_QUOTA_SUMMARY_URLS, ...ANTIGRAVITY_AVAILABLE_MODELS_URLS]) {
     try {
       const result = await apiCallApi.request({
         authIndex,
@@ -192,6 +233,7 @@ export const fetchAntigravityQuota = async (
 
       return {
         groups,
+        subscription: await subscriptionPromise,
         serverTimeOffsetMs: resolveResponseServerTimeOffsetMs(result.header),
       };
     } catch (err: unknown) {
@@ -207,7 +249,11 @@ export const fetchAntigravityQuota = async (
   }
 
   if (hadSuccess) {
-    return { groups: [], serverTimeOffsetMs: null };
+    return {
+      groups: [],
+      subscription: await subscriptionPromise,
+      serverTimeOffsetMs: null,
+    };
   }
 
   throw createStatusError(lastError || t('common.unknown_error'), priorityStatus ?? lastStatus);
