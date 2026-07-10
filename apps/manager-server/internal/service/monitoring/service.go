@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/pricing"
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/usagehourly"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/store"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usage"
 )
@@ -28,11 +29,19 @@ const (
 )
 
 type Service struct {
-	store *store.Store
+	store        *store.Store
+	hourlyReader *usagehourly.Reader
 }
 
-func New(store *store.Store) *Service {
-	return &Service{store: store}
+func New(store *store.Store, hourlyRollupEnabled ...bool) *Service {
+	enabled := false
+	if len(hourlyRollupEnabled) > 0 {
+		enabled = hourlyRollupEnabled[0]
+	}
+	return &Service{
+		store:        store,
+		hourlyReader: usagehourly.New(store, enabled, "monitoring-rollup"),
+	}
 }
 
 type Request struct {
@@ -645,13 +654,27 @@ func (s *Service) Analytics(ctx context.Context, req Request) (Response, error) 
 	// (summary and events use the exact same filter).
 	var summaryTotalCalls int64
 	summaryComputed := false
+	rollupEligible := analyticsHourlyRollupEligible(filter)
+	needsHourlyAggregates := req.Include.Summary || req.Include.ModelShare || req.Include.ModelStats
+	needsHourlyTimeline := req.Include.Timeline || req.Include.AnomalyPoints
+	hourlyTimelineRepresentable := rollupEligible && needsHourlyTimeline && s.hourlyReader.CanRepresentAnalyticsTimeline(req.FromMS, req.ToMS, granularity, location)
+	needsHourlyCore := needsHourlyAggregates || hourlyTimelineRepresentable
+	var hourlySnapshot usagehourly.Snapshot
+	hourlySnapshotAvailable := false
+	if rollupEligible && needsHourlyCore {
+		hourlySnapshot, hourlySnapshotAvailable = s.hourlyReader.Load(ctx, req.FromMS, req.ToMS)
+	}
 
 	var modelStats []store.ModelStat
 	needsModelStats := req.Include.Summary || req.Include.ModelShare || req.Include.ModelStats
 	if needsModelStats {
-		modelStats, err = s.store.ModelStatsWithFilter(ctx, filter, 0)
-		if err != nil {
-			return Response{}, err
+		if hourlySnapshotAvailable {
+			modelStats = hourlySnapshot.ModelStats
+		} else {
+			modelStats, err = s.store.ModelStatsWithFilter(ctx, filter, 0)
+			if err != nil {
+				return Response{}, err
+			}
 		}
 	}
 
@@ -664,9 +687,14 @@ func (s *Service) Analytics(ctx context.Context, req Request) (Response, error) 
 	}
 
 	if req.Include.Summary {
-		agg, err := s.store.AggregateWithFilter(ctx, filter)
-		if err != nil {
-			return Response{}, err
+		var agg store.Aggregate
+		if hourlySnapshotAvailable {
+			agg = hourlySnapshot.Aggregate
+		} else {
+			agg, err = s.store.AggregateWithFilter(ctx, filter)
+			if err != nil {
+				return Response{}, err
+			}
 		}
 		latencySummary, err := s.store.LatencySummaryWithFilter(ctx, filter)
 		if err != nil {
@@ -700,13 +728,25 @@ func (s *Service) Analytics(ctx context.Context, req Request) (Response, error) 
 				prevFilter := filter
 				prevFilter.FromMS = prevFrom
 				prevFilter.ToMS = req.FromMS
-				prevAgg, err := s.store.AggregateWithFilter(ctx, prevFilter)
-				if err != nil {
-					return Response{}, err
+				var prevAgg store.Aggregate
+				var prevModelStats []store.ModelStat
+				var prevSnapshot usagehourly.Snapshot
+				prevSnapshotAvailable := false
+				if rollupEligible {
+					prevSnapshot, prevSnapshotAvailable = s.hourlyReader.Load(ctx, prevFrom, req.FromMS)
 				}
-				prevModelStats, err := s.store.ModelStatsWithFilter(ctx, prevFilter, 0)
-				if err != nil {
-					return Response{}, err
+				if prevSnapshotAvailable {
+					prevAgg = prevSnapshot.Aggregate
+					prevModelStats = prevSnapshot.ModelStats
+				} else {
+					prevAgg, err = s.store.AggregateWithFilter(ctx, prevFilter)
+					if err != nil {
+						return Response{}, err
+					}
+					prevModelStats, err = s.store.ModelStatsWithFilter(ctx, prevFilter, 0)
+					if err != nil {
+						return Response{}, err
+					}
 				}
 				response.SummaryComparison = &SummaryComparison{
 					FromMS:       prevFrom,
@@ -723,9 +763,16 @@ func (s *Service) Analytics(ctx context.Context, req Request) (Response, error) 
 	}
 	var timeline []TimelinePoint
 	if req.Include.Timeline || req.Include.AnomalyPoints {
-		points, err := s.store.TimelineWithFilter(ctx, filter, granularity, location)
-		if err != nil {
-			return Response{}, err
+		var points []store.TimelinePoint
+		pointsAvailable := false
+		if hourlySnapshotAvailable && hourlyTimelineRepresentable {
+			points, pointsAvailable = s.hourlyReader.AnalyticsTimeline(ctx, hourlySnapshot, granularity, location)
+		}
+		if !pointsAvailable {
+			points, err = s.store.TimelineWithFilter(ctx, filter, granularity, location)
+			if err != nil {
+				return Response{}, err
+			}
 		}
 		percentiles, err := s.store.LatencyPercentilesWithFilter(ctx, filter, granularity, location)
 		if err != nil {
@@ -1037,6 +1084,28 @@ func buildFilter(req Request) store.AnalyticsFilter {
 		MinLatencyMS:     req.Filters.MinLatencyMS,
 		CacheStatus:      req.Filters.CacheStatus,
 	}
+}
+
+func analyticsHourlyRollupEligible(filter store.AnalyticsFilter) bool {
+	return strings.TrimSpace(filter.SearchQuery) == "" &&
+		strings.TrimSpace(filter.SearchAPIKeyHash) == "" &&
+		len(filter.Models) == 0 &&
+		len(filter.Providers) == 0 &&
+		len(filter.Accounts) == 0 &&
+		len(filter.AuthFiles) == 0 &&
+		len(filter.AuthIndices) == 0 &&
+		len(filter.APIKeyHashes) == 0 &&
+		len(filter.SourceHashes) == 0 &&
+		len(filter.ProjectIDs) == 0 &&
+		len(filter.RequestTypes) == 0 &&
+		len(filter.HeaderErrorKinds) == 0 &&
+		len(filter.HeaderErrorCodes) == 0 &&
+		len(filter.HeaderQuotaPlans) == 0 &&
+		len(filter.HeaderTraceIDs) == 0 &&
+		filter.IncludeFailed &&
+		!filter.FailedOnly &&
+		filter.MinLatencyMS == 0 &&
+		strings.TrimSpace(filter.CacheStatus) == ""
 }
 
 func (s *Service) filterOptions(ctx context.Context, filter store.AnalyticsFilter, prices map[string]store.ModelPrice) (*FilterOptions, error) {

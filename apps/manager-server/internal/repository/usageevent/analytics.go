@@ -525,17 +525,6 @@ order by max(t.model_calls) desc, f.model, calls desc`
 	return stats, rows.Err()
 }
 
-func resolveBucketMS(timestampMS int64, granularity string, location *time.Location) int64 {
-	if location == nil {
-		location = time.UTC
-	}
-	tm := time.UnixMilli(timestampMS).In(location)
-	if granularity == "day" {
-		return time.Date(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0, location).UnixMilli()
-	}
-	return time.Date(tm.Year(), tm.Month(), tm.Day(), tm.Hour(), 0, 0, 0, location).UnixMilli()
-}
-
 func (r *repository) TimelineWithFilter(ctx context.Context, filter AnalyticsFilter, granularity string, location *time.Location) ([]TimelinePoint, error) {
 	where, args := analyticsWhere(filter)
 	query := fmt.Sprintf(`select
@@ -600,7 +589,7 @@ order by timestamp_ms, model`, where)
 			return nil, err
 		}
 		mapKey := key{
-			bucketMS:     resolveBucketMS(timestampMS, granularity, location),
+			bucketMS:     usage.AnalyticsBucketMS(timestampMS, granularity, location),
 			model:        model,
 			billingModel: billingModel,
 			serviceTier:  serviceTier,
@@ -692,7 +681,7 @@ order by timestamp_ms`, where)
 		if err := rows.Scan(&timestampMS, &latency, &ttft); err != nil {
 			return nil, err
 		}
-		bucketMS := resolveBucketMS(timestampMS, granularity, location)
+		bucketMS := usage.AnalyticsBucketMS(timestampMS, granularity, location)
 		if !hasCurrentBucket || bucketMS != currentBucketMS {
 			flushBucket()
 			currentBucketMS = bucketMS
@@ -1375,7 +1364,7 @@ order by timestamp_ms, credential_id, model`, where)
 		); err != nil {
 			return nil, err
 		}
-		bucketMS := resolveBucketMS(timestampMS, granularity, location)
+		bucketMS := usage.AnalyticsBucketMS(timestampMS, granularity, location)
 		mapKey := key{
 			id:               point.ID,
 			authFileSnapshot: point.AuthFileSnapshot,

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/usagehourly"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/store"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usage"
 )
@@ -21,7 +23,17 @@ func BenchmarkUsageAnalyticsIncludeProfiles(b *testing.B) {
 	fromMS := int64(1_800_000_000_000)
 	toMS := fromMS + 30*24*60*60*1000
 	insertMonitoringBenchmarkEvents(b, ctx, db, fromMS, toMS, 100_000)
-	service := New(db)
+	for {
+		result, err := db.CatchUpDashboardHourlyRollups(ctx, 5_000, toMS)
+		if err != nil {
+			b.Fatalf("catch up hourly rollup: %v", err)
+		}
+		if !result.Pending {
+			break
+		}
+	}
+	rawService := New(db, false)
+	rollupService := New(db, true)
 
 	request := func(include Include) Request {
 		return Request{
@@ -35,10 +47,12 @@ func BenchmarkUsageAnalyticsIncludeProfiles(b *testing.B) {
 	selectors := request(Include{FilterOptions: true, FilterSelectors: true})
 	profiles := []struct {
 		name     string
+		service  *Service
 		requests []Request
 	}{
 		{
-			name: "legacy_full",
+			name:    "legacy_full",
+			service: rollupService,
 			requests: []Request{request(Include{
 				Summary:            true,
 				SummaryComparison:  true,
@@ -55,7 +69,8 @@ func BenchmarkUsageAnalyticsIncludeProfiles(b *testing.B) {
 			})},
 		},
 		{
-			name: "overview_initial",
+			name:    "overview_initial",
+			service: rollupService,
 			requests: []Request{
 				request(Include{
 					Summary:           true,
@@ -71,7 +86,8 @@ func BenchmarkUsageAnalyticsIncludeProfiles(b *testing.B) {
 			},
 		},
 		{
-			name: "overview_tab_request",
+			name:    "overview_tab_raw",
+			service: rawService,
 			requests: []Request{request(Include{
 				Summary:           true,
 				SummaryComparison: true,
@@ -84,7 +100,44 @@ func BenchmarkUsageAnalyticsIncludeProfiles(b *testing.B) {
 			})},
 		},
 		{
-			name: "trends_tab_request",
+			name:    "overview_tab_rollup",
+			service: rollupService,
+			requests: []Request{request(Include{
+				Summary:           true,
+				SummaryComparison: true,
+				Timeline:          true,
+				ModelStats:        true,
+				ChannelShare:      true,
+				APIKeyStats:       true,
+				AnomalyPoints:     true,
+				Granularity:       "day",
+			})},
+		},
+		{
+			name:    "analytics_core_raw",
+			service: rawService,
+			requests: []Request{request(Include{
+				Summary:           true,
+				SummaryComparison: true,
+				Timeline:          true,
+				ModelStats:        true,
+				Granularity:       "day",
+			})},
+		},
+		{
+			name:    "analytics_core_rollup",
+			service: rollupService,
+			requests: []Request{request(Include{
+				Summary:           true,
+				SummaryComparison: true,
+				Timeline:          true,
+				ModelStats:        true,
+				Granularity:       "day",
+			})},
+		},
+		{
+			name:    "trends_tab_request",
+			service: rollupService,
 			requests: []Request{request(Include{
 				Summary:           true,
 				SummaryComparison: true,
@@ -96,7 +149,8 @@ func BenchmarkUsageAnalyticsIncludeProfiles(b *testing.B) {
 			})},
 		},
 		{
-			name: "models_tab_request",
+			name:    "models_tab_request",
+			service: rollupService,
 			requests: []Request{request(Include{
 				Summary:     true,
 				Timeline:    true,
@@ -106,7 +160,8 @@ func BenchmarkUsageAnalyticsIncludeProfiles(b *testing.B) {
 			})},
 		},
 		{
-			name: "api_keys_tab_request",
+			name:    "api_keys_tab_request",
+			service: rollupService,
 			requests: []Request{request(Include{
 				Summary:     true,
 				APIKeyStats: true,
@@ -114,7 +169,8 @@ func BenchmarkUsageAnalyticsIncludeProfiles(b *testing.B) {
 			})},
 		},
 		{
-			name: "credentials_tab_request",
+			name:    "credentials_tab_request",
+			service: rollupService,
 			requests: []Request{request(Include{
 				Summary:            true,
 				CredentialStats:    true,
@@ -123,14 +179,15 @@ func BenchmarkUsageAnalyticsIncludeProfiles(b *testing.B) {
 			})},
 		},
 		{
-			name: "heatmap_tab_request",
+			name:    "heatmap_tab_request",
+			service: rollupService,
 			requests: []Request{request(Include{
 				Summary:     true,
 				Heatmap:     true,
 				Granularity: "day",
 			})},
 		},
-		{name: "filter_selectors", requests: []Request{selectors}},
+		{name: "filter_selectors", service: rollupService, requests: []Request{selectors}},
 	}
 
 	for _, profile := range profiles {
@@ -138,13 +195,65 @@ func BenchmarkUsageAnalyticsIncludeProfiles(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
 				for _, req := range profile.requests {
-					if _, err := service.Analytics(ctx, req); err != nil {
+					if _, err := profile.service.Analytics(ctx, req); err != nil {
 						b.Fatalf("analytics: %v", err)
 					}
 				}
 			}
 		})
 	}
+}
+
+func BenchmarkUsageAnalyticsHourlyCorePaths(b *testing.B) {
+	db, err := store.Open(filepath.Join(b.TempDir(), "usage.sqlite"))
+	if err != nil {
+		b.Fatalf("open store: %v", err)
+	}
+	b.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	fromMS := int64(1_800_000_000_000)
+	toMS := fromMS + 30*24*60*60*1000
+	insertMonitoringBenchmarkEvents(b, ctx, db, fromMS, toMS, 100_000)
+	for {
+		result, err := db.CatchUpDashboardHourlyRollups(ctx, 5_000, toMS)
+		if err != nil {
+			b.Fatalf("catch up hourly rollup: %v", err)
+		}
+		if !result.Pending {
+			break
+		}
+	}
+	filter := store.AnalyticsFilter{FromMS: fromMS, ToMS: toMS, IncludeFailed: true}
+	reader := usagehourly.New(db, true)
+
+	b.Run("raw", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			if _, err := db.AggregateWithFilter(ctx, filter); err != nil {
+				b.Fatalf("aggregate: %v", err)
+			}
+			if _, err := db.ModelStatsWithFilter(ctx, filter, 0); err != nil {
+				b.Fatalf("model stats: %v", err)
+			}
+			if _, err := db.TimelineWithFilter(ctx, filter, "day", time.UTC); err != nil {
+				b.Fatalf("timeline: %v", err)
+			}
+		}
+	})
+
+	b.Run("rollup", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			snapshot, ok := reader.Load(ctx, fromMS, toMS)
+			if !ok {
+				b.Fatal("rollup unavailable")
+			}
+			if _, ok := reader.AnalyticsTimeline(ctx, snapshot, "day", time.UTC); !ok {
+				b.Fatal("rollup timeline unavailable")
+			}
+		}
+	})
 }
 
 func insertMonitoringBenchmarkEvents(b *testing.B, ctx context.Context, db *store.Store, fromMS, toMS int64, count int) {

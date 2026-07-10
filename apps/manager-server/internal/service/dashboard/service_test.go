@@ -497,19 +497,6 @@ func TestSummaryDashboardHourlyRollupCanBeDisabled(t *testing.T) {
 	}
 }
 
-func TestDashboardRollupFallbackLogIsRateLimited(t *testing.T) {
-	service := New(newDashboardTestStore(t))
-	service.logRollupFallback("first")
-	first := service.lastRollupFallbackLogMS.Load()
-	if first <= 0 {
-		t.Fatalf("first log timestamp = %d", first)
-	}
-	service.logRollupFallback("second")
-	if got := service.lastRollupFallbackLogMS.Load(); got != first {
-		t.Fatalf("fallback log was not rate limited: first=%d got=%d", first, got)
-	}
-}
-
 func catchUpDashboardHourlyForTest(t *testing.T, ctx context.Context, db *store.Store) {
 	t.Helper()
 	for {
