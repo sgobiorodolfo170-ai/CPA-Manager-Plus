@@ -36,6 +36,26 @@ func TestImportStreamsBatchesIntoStore(t *testing.T) {
 	}
 }
 
+func TestImportNotifiesOnceAfterInsertedEvents(t *testing.T) {
+	cfg := testutil.NewConfig(t)
+	st := testutil.NewStore(t, cfg)
+	service := New(st)
+	notifications := 0
+	service.SetEventsInsertedNotifier(func() { notifications++ })
+	var payload strings.Builder
+	for index := 0; index < 300; index++ {
+		writeImportTestEvent(&payload, fmt.Sprintf("notify-event-%d", index), int64(index+1))
+	}
+
+	result, _, err := service.Import(context.Background(), strings.NewReader(payload.String()))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if result.Added != 300 || notifications != 1 {
+		t.Fatalf("result = %#v notifications = %d", result, notifications)
+	}
+}
+
 func TestImportKeepsCompletedBatchesWhenReaderFails(t *testing.T) {
 	cfg := testutil.NewConfig(t)
 	st := testutil.NewStore(t, cfg)
@@ -59,6 +79,28 @@ func TestImportKeepsCompletedBatchesWhenReaderFails(t *testing.T) {
 	}
 	if events != importBatchSize {
 		t.Fatalf("events = %d, want committed batch %d", events, importBatchSize)
+	}
+}
+
+func TestImportNotifiesAfterPartialSuccess(t *testing.T) {
+	cfg := testutil.NewConfig(t)
+	st := testutil.NewStore(t, cfg)
+	service := New(st)
+	notifications := 0
+	service.SetEventsInsertedNotifier(func() { notifications++ })
+	var payload strings.Builder
+	for index := 0; index < 300; index++ {
+		writeImportTestEvent(&payload, fmt.Sprintf("partial-notify-event-%d", index), int64(index+1))
+	}
+	readerErr := errors.New("reader failed")
+	reader := &errorAtEOFReader{reader: strings.NewReader(payload.String()), err: readerErr}
+
+	result, _, err := service.Import(context.Background(), reader)
+	if !errors.Is(err, readerErr) {
+		t.Fatalf("error = %v", err)
+	}
+	if result.Added != importBatchSize || notifications != 1 {
+		t.Fatalf("result = %#v notifications = %d", result, notifications)
 	}
 }
 

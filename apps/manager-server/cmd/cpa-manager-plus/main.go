@@ -92,6 +92,17 @@ func runServer() {
 	accountActionWorker := worker.NewAccountActionCandidateWorker(db, runtimeSettings.AccountActionsAutoDisable)
 	accountHistoryRollupWorker := worker.NewAccountHistoryRollupWorker(db)
 	accountHistoryRollupWorker.Start(ctx)
+	var dashboardHourlyRollupWorker *worker.DashboardHourlyRollupWorker
+	if cfg.DashboardHourlyRollupEnabled {
+		dashboardHourlyRollupWorker = worker.NewDashboardHourlyRollupWorker(db)
+		dashboardHourlyRollupWorker.Start(ctx)
+	}
+	serverApp.AppContext().UsageService.SetEventsInsertedNotifier(func() {
+		accountHistoryRollupWorker.Wake()
+		if dashboardHourlyRollupWorker != nil {
+			dashboardHourlyRollupWorker.Wake()
+		}
+	})
 	automationRuntime := worker.NewAutomationRuntime(
 		automationSettingsService,
 		manager,
@@ -103,6 +114,7 @@ func runServer() {
 	manager.SetUsageEventHandler(worker.NewUsageEventFanout(
 		automationRuntime.UsageEventHandler(),
 		accountHistoryRollupWorker,
+		dashboardHourlyRollupWorker,
 	))
 
 	collectorWorker.Start(ctx)

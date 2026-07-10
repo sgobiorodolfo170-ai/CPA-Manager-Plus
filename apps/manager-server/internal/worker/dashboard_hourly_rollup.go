@@ -12,12 +12,12 @@ import (
 )
 
 const (
-	defaultAccountHistoryRollupBatchLimit    = 1000
-	defaultAccountHistoryRollupMaxBatches    = 10
-	defaultAccountHistoryRollupCheckInterval = 30 * time.Second
+	defaultDashboardHourlyRollupBatchLimit    = 1000
+	defaultDashboardHourlyRollupMaxBatches    = 10
+	defaultDashboardHourlyRollupCheckInterval = 30 * time.Second
 )
 
-type AccountHistoryRollupWorker struct {
+type DashboardHourlyRollupWorker struct {
 	store             *store.Store
 	wake              chan struct{}
 	running           int32
@@ -27,18 +27,18 @@ type AccountHistoryRollupWorker struct {
 	continuationDelay time.Duration
 }
 
-func NewAccountHistoryRollupWorker(store *store.Store) *AccountHistoryRollupWorker {
-	return &AccountHistoryRollupWorker{
+func NewDashboardHourlyRollupWorker(store *store.Store) *DashboardHourlyRollupWorker {
+	return &DashboardHourlyRollupWorker{
 		store:             store,
 		wake:              make(chan struct{}, 1),
-		batchLimit:        defaultAccountHistoryRollupBatchLimit,
-		maxBatches:        defaultAccountHistoryRollupMaxBatches,
-		checkInterval:     defaultAccountHistoryRollupCheckInterval,
+		batchLimit:        defaultDashboardHourlyRollupBatchLimit,
+		maxBatches:        defaultDashboardHourlyRollupMaxBatches,
+		checkInterval:     defaultDashboardHourlyRollupCheckInterval,
 		continuationDelay: defaultRollupContinuationDelay,
 	}
 }
 
-func (w *AccountHistoryRollupWorker) Start(ctx context.Context) {
+func (w *DashboardHourlyRollupWorker) Start(ctx context.Context) {
 	if w == nil || w.store == nil {
 		return
 	}
@@ -46,14 +46,14 @@ func (w *AccountHistoryRollupWorker) Start(ctx context.Context) {
 	w.Wake()
 }
 
-func (w *AccountHistoryRollupWorker) HandleUsageEvents(ctx context.Context, _ collectorpkg.RuntimeConfig, events []usage.Event) {
+func (w *DashboardHourlyRollupWorker) HandleUsageEvents(ctx context.Context, _ collectorpkg.RuntimeConfig, events []usage.Event) {
 	if w == nil || len(events) == 0 || ctx.Err() != nil {
 		return
 	}
 	w.Wake()
 }
 
-func (w *AccountHistoryRollupWorker) Wake() {
+func (w *DashboardHourlyRollupWorker) Wake() {
 	if w == nil {
 		return
 	}
@@ -63,11 +63,11 @@ func (w *AccountHistoryRollupWorker) Wake() {
 	}
 }
 
-func (w *AccountHistoryRollupWorker) loop(ctx context.Context) {
+func (w *DashboardHourlyRollupWorker) loop(ctx context.Context) {
 	runRollupLoop(ctx, w.wake, w.checkInterval, w.continuationDelay, w.catchUp)
 }
 
-func (w *AccountHistoryRollupWorker) catchUp(ctx context.Context) bool {
+func (w *DashboardHourlyRollupWorker) catchUp(ctx context.Context) bool {
 	if !atomic.CompareAndSwapInt32(&w.running, 0, 1) {
 		return false
 	}
@@ -78,9 +78,9 @@ func (w *AccountHistoryRollupWorker) catchUp(ctx context.Context) bool {
 		if ctx.Err() != nil {
 			return false
 		}
-		result, err := w.store.CatchUpAccountHistoryRollups(ctx, w.batchLimit, time.Now().UnixMilli())
+		result, err := w.store.CatchUpDashboardHourlyRollups(ctx, w.batchLimit, time.Now().UnixMilli())
 		if err != nil {
-			log.Printf("[usage-rollup] account history catch-up failed: %v", err)
+			log.Printf("[usage-rollup] dashboard hourly catch-up failed: %v", err)
 			return false
 		}
 		pending = result.Pending

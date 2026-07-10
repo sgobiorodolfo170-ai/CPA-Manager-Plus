@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/store"
 	usageparser "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usage"
@@ -32,13 +33,30 @@ func (e *ImportPersistenceError) Unwrap() error {
 }
 
 type Service struct {
-	store *store.Store
+	store                  *store.Store
+	notifierMu             sync.RWMutex
+	eventsInsertedNotifier func()
 }
 
 const importBatchSize = 256
 
 func New(store *store.Store) *Service {
 	return &Service{store: store}
+}
+
+func (s *Service) SetEventsInsertedNotifier(notifier func()) {
+	s.notifierMu.Lock()
+	s.eventsInsertedNotifier = notifier
+	s.notifierMu.Unlock()
+}
+
+func (s *Service) notifyEventsInserted() {
+	s.notifierMu.RLock()
+	notifier := s.eventsInsertedNotifier
+	s.notifierMu.RUnlock()
+	if notifier != nil {
+		notifier()
+	}
 }
 
 func (s *Service) WriteCompatibleUsage(ctx context.Context, writer io.Writer, limit int) error {
@@ -61,6 +79,9 @@ func (s *Service) Import(ctx context.Context, reader io.Reader) (ImportResult, *
 		skipped += result.Skipped
 		return nil
 	})
+	if added > 0 {
+		s.notifyEventsInserted()
+	}
 	result := ImportResult{
 		Format:      parsed.Format,
 		Added:       added,
