@@ -142,7 +142,6 @@ describe('usage analytics request model', () => {
       summary: true,
       summary_profile: 'compact',
       credential_stats: true,
-      credential_timeline: true,
       granularity: 'day',
     });
     expect(

@@ -594,6 +594,7 @@ export interface MonitoringAnalyticsFilters {
   models?: string[];
   providers?: string[];
   accounts?: string[];
+  credential_ids?: string[];
   auth_files?: string[];
   auth_indices?: string[];
   api_key_hashes?: string[];

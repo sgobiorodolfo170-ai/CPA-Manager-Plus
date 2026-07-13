@@ -756,7 +756,6 @@ export const buildUsageAnalyticsInclude = (
       break;
     case 'credentials':
       include.credential_stats = true;
-      include.credential_timeline = true;
       break;
     case 'heatmap':
       include.heatmap = true;
