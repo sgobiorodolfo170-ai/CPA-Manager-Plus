@@ -341,7 +341,7 @@ func BenchmarkUsageAnalyticsHourlyCorePaths(b *testing.B) {
 	b.Run("rollup", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
-			snapshot, ok := reader.Load(ctx, fromMS, toMS)
+			snapshot, ok := reader.LoadAnalytics(ctx, fromMS, toMS, "day", time.UTC, true)
 			if !ok {
 				b.Fatal("rollup unavailable")
 			}

@@ -674,7 +674,14 @@ func (s *Service) Analytics(ctx context.Context, req Request) (Response, error) 
 	var hourlySnapshot usagehourly.Snapshot
 	hourlySnapshotAvailable := false
 	if rollupEligible && needsHourlyCore {
-		hourlySnapshot, hourlySnapshotAvailable = s.hourlyReader.Load(ctx, req.FromMS, req.ToMS)
+		hourlySnapshot, hourlySnapshotAvailable = s.hourlyReader.LoadAnalytics(
+			ctx,
+			req.FromMS,
+			req.ToMS,
+			granularity,
+			location,
+			hourlyTimelineRepresentable,
+		)
 	}
 
 	var modelStats []store.ModelStat
@@ -760,7 +767,14 @@ func (s *Service) Analytics(ctx context.Context, req Request) (Response, error) 
 				var prevSnapshot usagehourly.Snapshot
 				prevSnapshotAvailable := false
 				if rollupEligible {
-					prevSnapshot, prevSnapshotAvailable = s.hourlyReader.Load(ctx, prevFrom, req.FromMS)
+					prevSnapshot, prevSnapshotAvailable = s.hourlyReader.LoadAnalytics(
+						ctx,
+						prevFrom,
+						req.FromMS,
+						granularity,
+						location,
+						false,
+					)
 				}
 				if prevSnapshotAvailable {
 					prevAgg = prevSnapshot.Aggregate
