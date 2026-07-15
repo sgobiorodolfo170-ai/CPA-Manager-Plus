@@ -141,6 +141,22 @@ func Migrate(db *sql.DB) error {
 			updated_at_ms integer not null,
 			primary key (bucket_ms, model, billing_model, service_tier)
 		)`,
+		`create table if not exists usage_data_migrations (
+			name text primary key,
+			status text not null,
+			last_event_id integer not null default 0,
+			target_event_id integer not null default 0,
+			processed_rows integer not null default 0,
+			started_at_ms integer,
+			updated_at_ms integer not null default 0,
+			finished_at_ms integer,
+			last_error text
+		)`,
+		`insert or ignore into usage_data_migrations (
+			name, status, last_event_id, target_event_id, processed_rows, updated_at_ms
+		) select 'usage_cache_accounting_v1',
+			case when exists (select 1 from usage_events limit 1) then 'discovering' else 'completed' end,
+			0, 0, 0, 0`,
 		`create table if not exists dead_letter_events (
 			id integer primary key autoincrement,
 			payload text not null,
@@ -665,55 +681,10 @@ func ensureUsageEventSnapshotColumns(db *sql.DB) error {
 			return err
 		}
 	}
-	if _, err := tx.Exec(`update usage_events set
-		cache_input_mode = case
-			when lower(coalesce(provider, '') || ' ' || coalesce(executor_type, '') || ' ' || coalesce(resolved_model, '') || ' ' || coalesce(model, '')) like '%anthropic%'
-				or lower(coalesce(provider, '') || ' ' || coalesce(executor_type, '') || ' ' || coalesce(resolved_model, '') || ' ' || coalesce(model, '')) like '%claude%'
-				then 'separate_from_input'
-			when lower(coalesce(provider, '') || ' ' || coalesce(executor_type, '') || ' ' || coalesce(resolved_model, '') || ' ' || coalesce(model, '')) like '%openai%'
-				or lower(coalesce(provider, '') || ' ' || coalesce(executor_type, '') || ' ' || coalesce(resolved_model, '') || ' ' || coalesce(model, '')) like '%codex%'
-				or lower(coalesce(provider, '') || ' ' || coalesce(executor_type, '') || ' ' || coalesce(resolved_model, '') || ' ' || coalesce(model, '')) like '%gemini%'
-				or lower(coalesce(provider, '') || ' ' || coalesce(executor_type, '') || ' ' || coalesce(resolved_model, '') || ' ' || coalesce(model, '')) like '%antigravity%'
-				or lower(coalesce(provider, '') || ' ' || coalesce(executor_type, '') || ' ' || coalesce(resolved_model, '') || ' ' || coalesce(model, '')) like '%gpt-%'
-				then 'included_in_input'
-			when coalesce(cache_read_tokens, 0) > 0 or coalesce(cache_creation_tokens, 0) > 0 then 'separate_from_input'
-			else 'included_in_input'
-		end
-	where cache_input_mode is null or trim(cache_input_mode) = ''`); err != nil {
+	if err := tx.Commit(); err != nil {
 		return err
 	}
-	compatCache := `max(max(cached_tokens, cache_tokens) - max(cache_read_tokens, 0) - max(cache_creation_tokens, 0), 0)`
-	normalizedRead := compatCache + ` + max(cache_read_tokens, 0)`
-	result, err := tx.Exec(`update usage_events set
-		normalized_cache_read_tokens = ` + normalizedRead + `,
-		normalized_cache_creation_tokens = max(cache_creation_tokens, 0),
-		normalized_uncached_input_tokens = case
-			when cache_input_mode = 'separate_from_input' then max(input_tokens, 0)
-			else max(input_tokens - (` + normalizedRead + `) - max(cache_creation_tokens, 0), 0)
-		end,
-		normalized_total_input_tokens = case
-			when cache_input_mode = 'separate_from_input' then max(input_tokens, 0) + (` + normalizedRead + `) + max(cache_creation_tokens, 0)
-			else max(input_tokens, 0)
-		end
-	where normalized_uncached_input_tokens is null
-		or normalized_total_input_tokens is null
-		or normalized_cache_read_tokens is null
-		or normalized_cache_creation_tokens is null`)
-	if err != nil {
-		return err
-	}
-	if affected, _ := result.RowsAffected(); affected > 0 {
-		for _, statement := range []string{
-			`delete from usage_account_model_rollups`,
-			`delete from usage_dashboard_hourly_rollups`,
-			`update usage_rollup_checkpoints set last_event_id = 0, updated_at_ms = 0, last_error = null`,
-		} {
-			if _, err := tx.Exec(statement); err != nil {
-				return err
-			}
-		}
-	}
-	return tx.Commit()
+	return nil
 }
 
 func ensureModelPriceColumns(db *sql.DB) error {

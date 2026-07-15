@@ -6,6 +6,44 @@ import (
 	"testing"
 )
 
+func TestUsageDataMigrationInitialStateMatchesExistingUsageData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage-data-migration.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("open empty sqlite: %v", err)
+	}
+	var status string
+	if err := db.QueryRow(`select status from usage_data_migrations where name = 'usage_cache_accounting_v1'`).Scan(&status); err != nil {
+		t.Fatalf("read empty migration state: %v", err)
+	}
+	if status != "completed" {
+		t.Fatalf("empty migration status = %q, want completed", status)
+	}
+	if _, err := db.Exec(`insert into usage_events (
+		event_hash, timestamp_ms, timestamp, model, input_tokens, created_at_ms
+	) values ('legacy', 1, '1', 'gpt-test', 1, 1)`); err != nil {
+		t.Fatalf("insert legacy event: %v", err)
+	}
+	if _, err := db.Exec(`drop table usage_data_migrations`); err != nil {
+		t.Fatalf("drop migration table: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+
+	db, err = Open(path)
+	if err != nil {
+		t.Fatalf("reopen legacy sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.QueryRow(`select status from usage_data_migrations where name = 'usage_cache_accounting_v1'`).Scan(&status); err != nil {
+		t.Fatalf("read legacy migration state: %v", err)
+	}
+	if status != "discovering" {
+		t.Fatalf("legacy migration status = %q, want discovering", status)
+	}
+}
+
 func TestCodexInspectionAutoRecoverySchema(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "codex-inspection.sqlite"))
 	if err != nil {
@@ -159,7 +197,7 @@ func TestEnsureUsageRollupLongContextColumnsRollsBackAndRetries(t *testing.T) {
 	assertTableCount(t, db, "usage_rollup_checkpoints", 0)
 }
 
-func TestEnsureUsageEventSnapshotColumnsRollsBackAndRetries(t *testing.T) {
+func TestEnsureUsageEventSnapshotColumnsOnlyMigratesSchema(t *testing.T) {
 	db, err := sql.Open("sqlite", dataSourceName(filepath.Join(t.TempDir(), "usage-event-migration.sqlite")))
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -189,7 +227,7 @@ func TestEnsureUsageEventSnapshotColumnsRollsBackAndRetries(t *testing.T) {
 		`insert into usage_dashboard_hourly_rollups (id) values (1)`,
 		`insert into usage_rollup_checkpoints (name, last_event_id, updated_at_ms, last_error)
 		values ('account_history', 1, 1, 'old')`,
-		`create trigger reject_dashboard_rollup_delete before delete on usage_dashboard_hourly_rollups
+		`create trigger reject_usage_event_update before update on usage_events
 		begin select raise(abort, 'blocked'); end`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
@@ -197,56 +235,21 @@ func TestEnsureUsageEventSnapshotColumnsRollsBackAndRetries(t *testing.T) {
 		}
 	}
 
-	if err := ensureUsageEventSnapshotColumns(db); err == nil {
-		t.Fatal("migration error = nil, want trigger failure")
+	if err := ensureUsageEventSnapshotColumns(db); err != nil {
+		t.Fatalf("migrate usage event schema: %v", err)
 	}
 	columns := migrationTableColumns(t, db, "usage_events")
-	if columns["cache_input_mode"] || columns["normalized_total_input_tokens"] {
-		t.Fatalf("usage event columns committed after failed migration: %#v", columns)
+	if !columns["cache_input_mode"] || !columns["normalized_total_input_tokens"] {
+		t.Fatalf("usage event schema columns = %#v", columns)
 	}
 	assertTableCount(t, db, "usage_account_model_rollups", 1)
 	assertTableCount(t, db, "usage_dashboard_hourly_rollups", 1)
-
-	if _, err := db.Exec(`drop trigger reject_dashboard_rollup_delete`); err != nil {
-		t.Fatalf("drop failure trigger: %v", err)
+	var normalizedTotal sql.NullInt64
+	if err := db.QueryRow(`select normalized_total_input_tokens from usage_events where id = 1`).Scan(&normalizedTotal); err != nil {
+		t.Fatalf("read partially migrated usage event: %v", err)
 	}
-	if err := ensureUsageEventSnapshotColumns(db); err != nil {
-		t.Fatalf("retry migration: %v", err)
-	}
-	columns = migrationTableColumns(t, db, "usage_events")
-	for _, column := range []string{
-		"request_service_tier",
-		"response_service_tier",
-		"cache_input_mode",
-		"normalized_uncached_input_tokens",
-		"normalized_total_input_tokens",
-		"normalized_cache_read_tokens",
-		"normalized_cache_creation_tokens",
-	} {
-		if !columns[column] {
-			t.Fatalf("usage_events missing column %s after retry: %#v", column, columns)
-		}
-	}
-	var mode string
-	var uncachedInput, totalInput, cacheRead, cacheCreation int64
-	if err := db.QueryRow(`select cache_input_mode, normalized_uncached_input_tokens,
-		normalized_total_input_tokens, normalized_cache_read_tokens, normalized_cache_creation_tokens
-		from usage_events where id = 1`).Scan(&mode, &uncachedInput, &totalInput, &cacheRead, &cacheCreation); err != nil {
-		t.Fatalf("read migrated usage event: %v", err)
-	}
-	if mode != "separate_from_input" || uncachedInput != 100 || totalInput != 400 || cacheRead != 300 || cacheCreation != 0 {
-		t.Fatalf("normalized usage = %q/%d/%d/%d/%d", mode, uncachedInput, totalInput, cacheRead, cacheCreation)
-	}
-	assertTableCount(t, db, "usage_account_model_rollups", 0)
-	assertTableCount(t, db, "usage_dashboard_hourly_rollups", 0)
-	var lastEventID, updatedAt int64
-	var lastError sql.NullString
-	if err := db.QueryRow(`select last_event_id, updated_at_ms, last_error
-		from usage_rollup_checkpoints where name = 'account_history'`).Scan(&lastEventID, &updatedAt, &lastError); err != nil {
-		t.Fatalf("read reset checkpoint: %v", err)
-	}
-	if lastEventID != 0 || updatedAt != 0 || lastError.Valid {
-		t.Fatalf("checkpoint = %d/%d/%v", lastEventID, updatedAt, lastError)
+	if normalizedTotal.Valid {
+		t.Fatalf("schema migration unexpectedly backfilled normalized total: %d", normalizedTotal.Int64)
 	}
 }
 
