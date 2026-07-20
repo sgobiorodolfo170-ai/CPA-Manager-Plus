@@ -692,6 +692,7 @@
     "rebuild_mid_system_message_label": "重建對話中途的 System 訊息",
     "rebuild_mid_system_message_hint": "轉送前將 Claude 對話中 role 為 system 的訊息移動到頂層 system 欄位。",
     "force_mapping_label": "將回應模型名稱回寫為別名",
+    "model_alias_scope_hint": "此處別名僅作用於目前 API Key 供應商。OAuth / 認證檔案的映射請在「驗證檔案 → OAuth 模型別名」中設定。",
     "input_modalities_placeholder": "輸入模態：text, image",
     "output_modalities_placeholder": "輸出模態：text, image",
     "model_discovery_already_added": "已新增",
@@ -1272,7 +1273,8 @@
     "scope_provider": "目前範圍：{{provider}}",
     "upgrade_required": "目前 CPA 版本不支援 OAuth 模型停用，請升級 CPA 版本",
     "upgrade_required_title": "需要升級 CPA 版本",
-    "upgrade_required_desc": "目前伺服器版本不支援取得 OAuth 模型停用功能，請升級到最新版本的 CPA（CLI Proxy API）後重試。"
+    "upgrade_required_desc": "目前伺服器版本不支援取得 OAuth 模型停用功能，請升級到最新版本的 CPA（CLI Proxy API）後重試。",
+    "scope_hint": "僅作用於 OAuth / 認證檔案渠道（如 claude、codex）。API Key 供應商請在「AI 供應商」中設定各自的模型別名。"
   },
   "oauth_model_alias": {
     "title": "OAuth 模型別名",
@@ -1281,6 +1283,8 @@
     "provider_label": "供應商",
     "provider_placeholder": "例如 vertex / codex",
     "provider_hint": "預設選取目前篩選的供應商，也可直接輸入或選擇其他名稱。",
+    "scope_hint": "僅作用於 OAuth / 認證檔案渠道（claude、codex、vertex 等）。「AI 供應商」中的 Claude API Key 不走這裡的映射。",
+    "usage_hint": "用戶端應請求「別名」。原模型名稱是上游真實 ID；別名是用戶端可見名稱。二者不能相同，且同一供應商內別名必須唯一。",
     "model_source_loading": "正在載入模型清單...",
     "model_source_unsupported": "目前 CPA 版本不支援取得模型清單（仍可手動輸入）。",
     "model_source_loaded": "已載入 {{count}} 個模型，可在「原模型名稱」中下拉選擇；也可手動輸入。留空儲存將刪除該供應商記錄；開啟「保留原名」會在保留原模型名的同時新增別名。",
@@ -1289,6 +1293,9 @@
     "alias_placeholder": "別名（必填）",
     "alias_fork_label": "保留原名",
     "alias_force_mapping_label": "回寫回應模型名稱",
+    "alias_same_as_name": "原模型名稱與別名不能相同。",
+    "alias_duplicate": "別名「{{alias}}」在此供應商下已存在。",
+    "alias_incomplete": "每條映射都需要填寫原模型名稱和別名。",
     "add_alias": "新增別名",
     "save": "儲存/更新",
     "save_success": "模型別名已更新",
