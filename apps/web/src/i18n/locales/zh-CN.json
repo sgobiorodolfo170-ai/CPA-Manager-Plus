@@ -1773,6 +1773,8 @@
     "reasoning_effort_short": "强度",
     "service_tier": "服务等级",
     "service_tier_short": "等级",
+    "request_service_tier_short": "请求等级",
+    "response_service_tier_short": "响应等级",
     "executor_type": "执行器类型",
     "executor_type_short": "执行器",
     "fail_status_code": "失败状态码",

@@ -1773,6 +1773,8 @@
     "reasoning_effort_short": "Effort",
     "service_tier": "Service Tier",
     "service_tier_short": "Tier",
+    "request_service_tier_short": "Requested tier",
+    "response_service_tier_short": "Reported tier",
     "executor_type": "Executor Type",
     "executor_type_short": "Executor",
     "fail_status_code": "Failure Status Code",

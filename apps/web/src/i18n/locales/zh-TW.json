@@ -1773,6 +1773,8 @@
     "reasoning_effort_short": "強度",
     "service_tier": "服務等級",
     "service_tier_short": "等級",
+    "request_service_tier_short": "請求等級",
+    "response_service_tier_short": "回應等級",
     "executor_type": "執行器類型",
     "executor_type_short": "執行器",
     "fail_status_code": "失敗狀態碼",

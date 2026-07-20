@@ -89,13 +89,18 @@ describe('buildEventRows', () => {
     const [row] = buildRows({
       executor_type: 'codex',
       service_tier: 'priority',
+      request_service_tier: 'priority',
+      response_service_tier: 'default',
       reasoning_effort: 'medium',
     });
 
     expect(row.executorType).toBe('codex');
     expect(row.serviceTier).toBe('priority');
+    expect(row.requestServiceTier).toBe('priority');
+    expect(row.responseServiceTier).toBe('default');
     expect(row.searchText).toContain('codex');
     expect(row.searchText).toContain('priority');
+    expect(row.searchText).toContain('default');
     expect(row.searchText).toContain('medium');
   });
 

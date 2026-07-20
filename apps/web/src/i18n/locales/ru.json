@@ -1773,6 +1773,8 @@
     "reasoning_effort_short": "Уровень",
     "service_tier": "Уровень сервиса",
     "service_tier_short": "Сервис",
+    "request_service_tier_short": "Запрошенный уровень",
+    "response_service_tier_short": "Уровень ответа",
     "executor_type": "Тип исполнителя",
     "executor_type_short": "Исполнитель",
     "fail_status_code": "Код ошибки",

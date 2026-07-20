@@ -129,7 +129,16 @@ export const buildEventRows = (
       const sourceKey = sourceMeta.identityKey || `source:${sourceLabel}`;
       const taskKey = `${detail.timestamp}|${sourceKey}|${authIndex}`;
       const reasoningEffort = readString(detail.reasoning_effort ?? detail.reasoningEffort);
-      const serviceTier = readString(detail.service_tier ?? detail.serviceTier);
+      const requestServiceTier = readString(
+        detail.request_service_tier ?? detail.requestServiceTier
+      );
+      const responseServiceTier = readString(
+        detail.response_service_tier ?? detail.responseServiceTier
+      );
+      const serviceTier =
+        requestServiceTier ||
+        readString(detail.service_tier ?? detail.serviceTier) ||
+        responseServiceTier;
       const executorType = readString(detail.executor_type ?? detail.executorType);
       const failStatusCodeRaw = detail.fail_status_code ?? detail.failStatusCode;
       const failStatusCode =
@@ -217,6 +226,8 @@ export const buildEventRows = (
         totalCost,
         reasoningEffort,
         serviceTier,
+        requestServiceTier,
+        responseServiceTier,
         executorType,
         failStatusCode: normalizedFailStatusCode,
         failSummary,
@@ -247,6 +258,8 @@ export const buildEventRows = (
           projectId,
           reasoningEffort,
           serviceTier,
+          requestServiceTier,
+          responseServiceTier,
           executorType,
           normalizedFailStatusCode,
           failSummary,
