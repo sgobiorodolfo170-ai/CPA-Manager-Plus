@@ -749,6 +749,141 @@
   -webkit-overflow-scrolling: touch;
 }
 
+.inferenceSummary {
+  --inference-tone: var(--inspect-muted);
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--inference-tone) 32%, var(--inspect-line));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--inference-tone) 6%, var(--inspect-surface));
+}
+
+.inferenceSummary.tone-good {
+  --inference-tone: var(--inspect-green);
+}
+
+.inferenceSummary.tone-warn {
+  --inference-tone: var(--inspect-amber);
+}
+
+.inferenceSummary.tone-bad {
+  --inference-tone: var(--inspect-red);
+}
+
+.inferenceSummaryPrimary {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-content: center;
+  column-gap: 10px;
+  min-width: 0;
+}
+
+.inferenceSummaryPrimary > span {
+  align-self: end;
+  color: var(--inspect-ink);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.inferenceSummaryPrimary > strong {
+  grid-row: span 2;
+  color: var(--inference-tone);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.inferenceSummaryPrimary > small {
+  color: var(--inspect-muted);
+  font-size: 11px;
+}
+
+.inferenceSummaryStats {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.inferenceSummaryStats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--inspect-line);
+  border-radius: 10px;
+  background: var(--inspect-surface-elevated);
+  color: var(--inspect-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.inferenceSummaryStats strong {
+  color: var(--inspect-ink);
+  font-size: 13px;
+}
+
+.mobileResultsList {
+  display: none;
+}
+
+.mobileResultCard {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--inspect-line);
+  border-radius: 14px;
+  background: var(--inspect-surface-elevated);
+}
+
+.mobileResultHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mobileResultFacts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mobileResultFacts > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: var(--inspect-surface-muted);
+}
+
+.mobileResultFacts span {
+  color: var(--inspect-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.mobileResultFacts strong {
+  overflow-wrap: anywhere;
+  color: var(--inspect-ink);
+  font-size: 12px;
+}
+
+.mobileResultActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+}
+
 .resultPaginationBar {
   display: flex;
   align-items: center;
@@ -804,35 +939,39 @@
 }
 
 .table {
-  width: max(100%, 1240px);
-  min-width: 1240px;
+  width: max(100%, 1340px);
+  min-width: 1340px;
   border-collapse: separate;
   border-spacing: 0 8px;
   table-layout: fixed;
 }
 
 .accountColumn {
-  width: 28%;
+  width: 24%;
 }
 
-.stateColumn {
+.providerColumn {
   width: 10%;
 }
 
+.stateColumn {
+  width: 9%;
+}
+
 .httpColumn {
-  width: 8%;
+  width: 7%;
 }
 
 .usageColumn {
-  width: 25%;
+  width: 23%;
 }
 
 .actionColumn {
-  width: 11%;
+  width: 10%;
 }
 
 .operationColumn {
-  width: 18%;
+  width: 17%;
 }
 
 .table thead th {
@@ -1562,10 +1701,19 @@
 }
 
 .configOverviewTitle {
+  display: block;
   color: var(--inspect-ink);
   font-size: 13px;
   font-weight: 800;
   letter-spacing: 0.01em;
+}
+
+.configOverviewInteractionHint {
+  display: block;
+  margin-top: 2px;
+  color: var(--inspect-muted);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .configOverviewEdit {
@@ -1598,6 +1746,19 @@
   gap: 8px;
 }
 
+.configOverviewItemShell {
+  position: relative;
+  min-width: 0;
+}
+
+.configOverviewItemShell.display-wide {
+  grid-column: span 2;
+}
+
+.configOverviewItemShell.display-long-text {
+  grid-column: 1 / -1;
+}
+
 .configOverviewItem {
   --overview-accent: var(--inspect-accent);
   display: grid;
@@ -1614,6 +1775,66 @@
     background-color 0.18s ease,
     transform 0.18s ease,
     box-shadow 0.18s ease;
+  width: 100%;
+  height: 100%;
+}
+
+.configOverviewItemEditIcon {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  color: var(--inspect-muted);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.configOverviewItem:hover .configOverviewItemEditIcon,
+.configOverviewItem:focus-visible .configOverviewItemEditIcon {
+  opacity: 1;
+}
+
+.configOverviewItemShell.display-long-text .configOverviewItem {
+  padding-right: 44px;
+}
+
+.configOverviewItemShell.display-long-text .configOverviewValue {
+  display: -webkit-box;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.configOverviewItemShell.display-wide .configOverviewValue {
+  display: -webkit-box;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.configOverviewCopy {
+  position: absolute;
+  right: 9px;
+  bottom: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--inspect-line);
+  border-radius: 8px;
+  background: var(--inspect-surface);
+  color: var(--inspect-muted);
+  cursor: pointer;
+}
+
+.configOverviewCopy:hover,
+.configOverviewCopy:focus-visible {
+  color: var(--inspect-accent-strong);
+  border-color: var(--inspect-accent);
 }
 
 .configOverviewItem:hover {
@@ -1693,6 +1914,61 @@
   display: flex;
   justify-content: flex-end;
   background: transparent;
+}
+
+.xaiInferenceNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--inspect-amber) 34%, var(--inspect-line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--inspect-amber) 8%, var(--inspect-surface));
+  color: var(--inspect-ink);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.xaiInferenceNotice svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--inspect-amber);
+}
+
+.promptFieldHeader,
+.promptFieldMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.promptFieldActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.promptFieldActions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--inspect-line);
+  border-radius: 8px;
+  background: var(--inspect-surface-elevated);
+  color: var(--inspect-muted);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.promptFieldMeta {
+  margin-top: 5px;
+  color: var(--inspect-muted);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .configDrawer {
@@ -2267,12 +2543,51 @@
   }
 
   .tableWrap {
-    margin-inline: -2px;
-    padding-inline: 2px;
+    display: none;
   }
 
-  .table {
-    width: 1240px;
+  .mobileResultsList {
+    display: grid;
+    gap: 10px;
+  }
+
+  .mobileResultHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .mobileResultHeader > .planBadge {
+    align-self: flex-start;
+  }
+
+  .mobileResultFacts {
+    grid-template-columns: 1fr;
+  }
+
+  .inferenceSummary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .inferenceSummaryStats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .inferenceSummaryStats span {
+    justify-content: center;
+    padding: 0 6px;
+  }
+
+  .mobileResultActions,
+  .mobileResultActions .resultsHeaderActions {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .mobileResultActions :global(button) {
+    width: 100%;
   }
 
   .resultPaginationControls {
@@ -2323,6 +2638,26 @@
 
   .configOverviewGrid {
     grid-template-columns: 1fr;
+  }
+
+  .configOverviewItemShell.display-wide,
+  .configOverviewItemShell.display-long-text {
+    grid-column: auto;
+  }
+
+  .promptFieldHeader,
+  .promptFieldMeta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .promptFieldActions {
+    width: 100%;
+  }
+
+  .promptFieldActions button {
+    flex: 1 1 0;
+    justify-content: center;
   }
 
   .configDrawer {

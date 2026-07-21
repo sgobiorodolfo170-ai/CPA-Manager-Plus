@@ -33,6 +33,8 @@ import {
   isPendingServerReauthResult,
   normalizeServerCodexInspectionActionStatus,
   summarizeInspectionError,
+  summarizeXaiInference,
+  getXaiInferenceState,
   validateInspectionConfigDraft,
 } from './model/codexInspectionPresentation';
 import {
@@ -96,12 +98,15 @@ const createRunResult = (): CodexInspectionRunResult => {
     settings: {
       baseUrl: 'https://secret.example.test',
       token: 'management-secret-token',
+      targetTypes: ['codex'],
       targetType: 'codex',
       workers: 2,
       deleteWorkers: 1,
       timeout: 1000,
       retries: 0,
       userAgent: 'test-agent',
+      xaiInferenceModel: 'grok-test',
+      xaiInferencePrompt: 'Reply OK.',
       usedPercentThreshold: 90,
       sampleSize: 0,
     },
@@ -138,6 +143,69 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('xAI inference presentation', () => {
+  it('classifies provider inference states', () => {
+    expect(getXaiInferenceState({ provider: 'codex', errorKind: 'inference_healthy' })).toBe(
+      'not-applicable'
+    );
+    expect(getXaiInferenceState({ provider: 'xai', errorKind: 'inference_healthy' })).toBe(
+      'success'
+    );
+    expect(getXaiInferenceState({ provider: 'xai', errorKind: 'missing_auth_index' })).toBe(
+      'skipped'
+    );
+    expect(getXaiInferenceState({ provider: 'xai', errorKind: 'model_unavailable' })).toBe(
+      'failed'
+    );
+    expect(getXaiInferenceState({ provider: 'xai', errorKind: 'future_failure' })).toBe('failed');
+  });
+
+  it('aggregates success rate across the complete xAI result set', () => {
+    expect(
+      summarizeXaiInference([
+        { provider: 'codex', errorKind: 'request_error' },
+        { provider: 'xai', errorKind: 'inference_healthy' },
+        { provider: 'xai', errorKind: 'inference_healthy' },
+        { provider: 'xai', errorKind: 'rate_limited' },
+        { provider: 'xai', errorKind: 'missing_auth_index' },
+      ])
+    ).toEqual({
+      total: 4,
+      attempted: 3,
+      succeeded: 2,
+      failed: 1,
+      skipped: 1,
+      successRate: (2 / 3) * 100,
+    });
+  });
+
+  it('returns an empty rate when all xAI inference checks were skipped', () => {
+    expect(
+      summarizeXaiInference([{ provider: 'xai', errorKind: 'missing_auth_index' }])
+    ).toMatchObject({ attempted: 0, succeeded: 0, failed: 0, skipped: 1, successRate: null });
+  });
+
+  it('does not create an inference summary for Codex-only results', () => {
+    expect(summarizeXaiInference([{ provider: 'codex', errorKind: 'request_error' }])).toEqual({
+      total: 0,
+      attempted: 0,
+      succeeded: 0,
+      failed: 0,
+      skipped: 0,
+      successRate: null,
+    });
+  });
+
+  it('reports zero percent when every attempted xAI inference failed', () => {
+    expect(
+      summarizeXaiInference([
+        { provider: 'xai', errorKind: 'rate_limited' },
+        { provider: 'xai', errorKind: 'model_unavailable' },
+      ])
+    ).toMatchObject({ attempted: 2, succeeded: 0, failed: 2, successRate: 0 });
+  });
+});
+
 describe('Codex inspection settings', () => {
   it('migrates legacy auto execute settings to auto disable', () => {
     const storage = createStorage();
@@ -163,12 +231,14 @@ describe('Codex inspection settings', () => {
 
     const invalid = validateInspectionConfigDraft(
       {
-        targetType: ' ',
+        targetTypes: ' ',
         workers: '0',
         deleteWorkers: '2',
         timeout: '15000',
         retries: '-1',
         userAgent: 'agent',
+        xaiInferenceModel: '',
+        xaiInferencePrompt: '',
         usedPercentThreshold: '120',
         sampleSize: 'all',
         autoActionMode: 'delete',
@@ -178,7 +248,7 @@ describe('Codex inspection settings', () => {
     );
 
     expect(invalid.ok).toBe(false);
-    expect(invalid.errors.targetType).toBe(
+    expect(invalid.errors.targetTypes).toBe(
       'monitoring.codex_inspection_settings_target_type_required'
     );
     expect(invalid.errors.workers).toContain('>= 1');
@@ -188,12 +258,14 @@ describe('Codex inspection settings', () => {
 
     const valid = validateInspectionConfigDraft(
       {
-        targetType: ' Codex ',
+        targetTypes: ' Codex + xAI ',
         workers: '3',
         deleteWorkers: '2',
         timeout: '15000',
         retries: '0',
         userAgent: ' agent ',
+        xaiInferenceModel: ' grok-custom ',
+        xaiInferencePrompt: ' Reply briefly. ',
         usedPercentThreshold: '99.5',
         sampleSize: '0',
         autoActionMode: 'unexpected',
@@ -204,12 +276,14 @@ describe('Codex inspection settings', () => {
 
     expect(valid.ok).toBe(true);
     expect(valid.values).toEqual({
-      targetType: 'Codex',
+      targetTypes: ['codex', 'xai'],
       workers: 3,
       deleteWorkers: 2,
       timeout: 15000,
       retries: 0,
       userAgent: 'agent',
+      xaiInferenceModel: 'grok-custom',
+      xaiInferencePrompt: 'Reply briefly.',
       usedPercentThreshold: 99.5,
       sampleSize: 0,
       autoActionMode: 'none',
@@ -227,6 +301,9 @@ describe('Codex inspection settings', () => {
       'monitoring.codex_inspection_workers': 'Workers',
       'monitoring.codex_inspection_settings_timeout_label': 'Timeout',
       'monitoring.codex_inspection_target_type': 'Target',
+      'monitoring.codex_inspection_target_codex': 'Codex',
+      'monitoring.codex_inspection_target_xai': 'xAI',
+      'monitoring.codex_inspection_target_codex_xai': 'Codex + xAI',
       'monitoring.server_codex_inspection_sample_all': 'All',
       'monitoring.server_codex_inspection_config_summary_schedule': 'Schedule',
       'monitoring.server_codex_inspection_config_summary_trigger': 'Trigger',
@@ -240,6 +317,7 @@ describe('Codex inspection settings', () => {
     };
     const t = ((key: string) => labels[key] ?? key) as never;
     const settings = {
+      targetTypes: ['codex'],
       targetType: 'codex',
       workers: 4,
       timeout: 15000,
@@ -247,6 +325,8 @@ describe('Codex inspection settings', () => {
       sampleSize: 0,
       autoActionMode: 'delete' as const,
       autoRecoverEnabled: false,
+      xaiInferenceModel: 'grok-4.5',
+      xaiInferencePrompt: 'Reply with exactly OK.',
     };
 
     expect(buildConfigOverviewItems(settings, { mode: 'local', t })).toMatchObject([
@@ -255,7 +335,7 @@ describe('Codex inspection settings', () => {
       { key: 'auto', value: 'Auto delete', tone: 'bad', field: 'autoActionMode' },
       { key: 'recover', value: 'Disabled', tone: 'idle', field: 'autoActionMode' },
       { key: 'concurrency', value: '4', hint: 'Timeout: 15000', field: 'workers' },
-      { key: 'target', value: 'codex', field: 'targetType' },
+      { key: 'target', value: 'Codex', field: 'targetTypes' },
     ]);
 
     expect(
@@ -272,7 +352,32 @@ describe('Codex inspection settings', () => {
       { key: 'sample', value: 'All', field: 'sampleSize' },
       { key: 'auto', value: 'Auto delete', tone: 'bad', field: 'autoActionMode' },
       { key: 'recover', value: 'Disabled', tone: 'idle', field: 'autoActionMode' },
+      { key: 'target', value: 'Codex', field: 'targetTypes' },
     ]);
+
+    const xaiSettings = {
+      ...settings,
+      targetTypes: ['codex', 'xai'],
+      xaiInferenceModel: 'grok-custom',
+      xaiInferencePrompt: 'Return a short health response.',
+    };
+    expect(buildConfigOverviewItems(xaiSettings, { mode: 'local', t })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'target', field: 'targetTypes' }),
+        expect.objectContaining({
+          key: 'xai-model',
+          value: 'grok-custom',
+          field: 'xaiInferenceModel',
+          display: 'wide',
+        }),
+        expect.objectContaining({
+          key: 'xai-prompt',
+          value: 'Return a short health response.',
+          field: 'xaiInferencePrompt',
+          display: 'long-text',
+        }),
+      ])
+    );
   });
 });
 

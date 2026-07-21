@@ -11,6 +11,10 @@ import {
 } from '@/features/monitoring/codexInspection';
 import type { CodexInspectionResult } from '@/services/api/usageService';
 import { formatXaiProbeIssue } from '@/utils/quota/xaiPresentation';
+import {
+  codexInspectionTargetTypesToSelection,
+  normalizeCodexInspectionTargetTypes,
+} from './codexInspectionSettings';
 
 export type RunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';
 
@@ -69,12 +73,14 @@ export type CodexInspectionPaginationState<T> = {
 };
 
 export type InspectionSettingsDraft = {
-  targetType: string;
+  targetTypes: string;
   workers: string;
   deleteWorkers: string;
   timeout: string;
   retries: string;
   userAgent: string;
+  xaiInferenceModel: string;
+  xaiInferencePrompt: string;
   usedPercentThreshold: string;
   sampleSize: string;
   autoActionMode: CodexInspectionAutoActionMode;
@@ -111,12 +117,14 @@ export const formatPercent = (value: number | null) =>
 export const toSettingsDraft = (
   settings: CodexInspectionConfigurableSettings
 ): InspectionSettingsDraft => ({
-  targetType: settings.targetType,
+  targetTypes: codexInspectionTargetTypesToSelection(settings.targetTypes, settings.targetType),
   workers: String(settings.workers),
   deleteWorkers: String(settings.deleteWorkers),
   timeout: String(settings.timeout),
   retries: String(settings.retries),
   userAgent: settings.userAgent,
+  xaiInferenceModel: settings.xaiInferenceModel,
+  xaiInferencePrompt: settings.xaiInferencePrompt,
   usedPercentThreshold: String(settings.usedPercentThreshold),
   sampleSize: String(settings.sampleSize),
   autoActionMode: settings.autoActionMode,
@@ -388,6 +396,54 @@ export const filterInspectionResults = (
   actionFilter: ActionFilter
 ) => filterByAction(filterByHandling(items, handlingFilter), actionFilter);
 
+export type XaiInferenceState = 'success' | 'failed' | 'skipped' | 'not-applicable';
+
+export type XaiInferenceSummary = {
+  total: number;
+  attempted: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  successRate: number | null;
+};
+
+export const getXaiInferenceState = (
+  item: Pick<CodexInspectionResultItem, 'provider' | 'errorKind'>
+): XaiInferenceState => {
+  if (item.provider.trim().toLowerCase() !== 'xai') return 'not-applicable';
+  if (item.errorKind === 'missing_auth_index') return 'skipped';
+  if (item.errorKind === 'inference_healthy') return 'success';
+  return 'failed';
+};
+
+export const summarizeXaiInference = (
+  items: readonly Pick<CodexInspectionResultItem, 'provider' | 'errorKind'>[]
+): XaiInferenceSummary => {
+  const summary: XaiInferenceSummary = {
+    total: 0,
+    attempted: 0,
+    succeeded: 0,
+    failed: 0,
+    skipped: 0,
+    successRate: null,
+  };
+  items.forEach((item) => {
+    const state = getXaiInferenceState(item);
+    if (state === 'not-applicable') return;
+    summary.total += 1;
+    if (state === 'skipped') {
+      summary.skipped += 1;
+      return;
+    }
+    summary.attempted += 1;
+    if (state === 'success') summary.succeeded += 1;
+    else summary.failed += 1;
+  });
+  summary.successRate =
+    summary.attempted > 0 ? (summary.succeeded / summary.attempted) * 100 : null;
+  return summary;
+};
+
 export const summarizeInspectionError = (
   item: Pick<
     CodexInspectionResultItem,
@@ -494,14 +550,16 @@ export const formatAutoActionModeLabel = (mode: CodexInspectionAutoActionMode, t
 // ─── 共享配置：字段级校验 + 概览卡数据 ───────────────────────────────
 // 本地与服务端共有的可校验文本字段（autoActionMode 走卡片选择,无需文本校验）。
 export type SharedInspectionConfigField =
-  | 'targetType'
+  | 'targetTypes'
   | 'usedPercentThreshold'
   | 'sampleSize'
   | 'workers'
   | 'deleteWorkers'
   | 'timeout'
   | 'retries'
-  | 'userAgent';
+  | 'userAgent'
+  | 'xaiInferenceModel'
+  | 'xaiInferencePrompt';
 
 export type SharedInspectionConfigDraft = {
   [K in SharedInspectionConfigField]: string;
@@ -513,12 +571,14 @@ export type SharedInspectionConfigDraft = {
 export type InspectionConfigFieldErrors = Partial<Record<SharedInspectionConfigField, string>>;
 
 export type ValidatedInspectionConfigValues = {
-  targetType: string;
+  targetTypes: string[];
   workers: number;
   deleteWorkers: number;
   timeout: number;
   retries: number;
   userAgent: string;
+  xaiInferenceModel: string;
+  xaiInferencePrompt: string;
   usedPercentThreshold: number;
   sampleSize: number;
   autoActionMode: CodexInspectionAutoActionMode;
@@ -551,8 +611,16 @@ export const validateInspectionConfigFields = (
 ): InspectionConfigFieldErrors => {
   const errors: InspectionConfigFieldErrors = {};
 
-  if (!['codex', 'xai'].includes(draft.targetType.trim().toLowerCase())) {
-    errors.targetType = t('monitoring.codex_inspection_settings_target_type_required');
+  if (normalizeCodexInspectionTargetTypes(draft.targetTypes).length === 0) {
+    errors.targetTypes = t('monitoring.codex_inspection_settings_target_type_required');
+  }
+  if (normalizeCodexInspectionTargetTypes(draft.targetTypes).includes('xai')) {
+    if (!draft.xaiInferenceModel.trim()) {
+      errors.xaiInferenceModel = t('monitoring.codex_inspection_settings_xai_model_required');
+    }
+    if (!draft.xaiInferencePrompt.trim()) {
+      errors.xaiInferencePrompt = t('monitoring.codex_inspection_settings_xai_prompt_required');
+    }
   }
 
   const checkInteger = (field: SharedInspectionConfigField, min: number, labelKey: string) => {
@@ -597,12 +665,14 @@ export const validateInspectionConfigDraft = (
     ok: true,
     errors,
     values: {
-      targetType: draft.targetType.trim(),
+      targetTypes: normalizeCodexInspectionTargetTypes(draft.targetTypes),
       workers: Number(draft.workers.trim()),
       deleteWorkers: Number(draft.deleteWorkers.trim()),
       timeout: Number(draft.timeout.trim()),
       retries: Number(draft.retries.trim()),
       userAgent: draft.userAgent.trim(),
+      xaiInferenceModel: draft.xaiInferenceModel.trim(),
+      xaiInferencePrompt: draft.xaiInferencePrompt.trim(),
       usedPercentThreshold: Number(draft.usedPercentThreshold.trim()),
       sampleSize: Number(draft.sampleSize.trim()),
       autoActionMode: normalizeInspectionAutoActionMode(draft.autoActionMode),
@@ -634,11 +704,19 @@ export type ConfigOverviewItem = {
   hint?: string;
   tone?: StatusTone;
   field?: string;
+  display?: 'default' | 'wide' | 'long-text';
 };
 
 type ConfigOverviewSettings = Pick<
   CodexInspectionConfigurableSettings,
-  'targetType' | 'workers' | 'timeout' | 'usedPercentThreshold' | 'sampleSize'
+  | 'targetTypes'
+  | 'targetType'
+  | 'workers'
+  | 'timeout'
+  | 'usedPercentThreshold'
+  | 'sampleSize'
+  | 'xaiInferenceModel'
+  | 'xaiInferencePrompt'
 > & {
   autoActionMode: CodexInspectionAutoActionMode | string;
   autoRecoverEnabled: boolean;
@@ -667,6 +745,42 @@ export const buildConfigOverviewItems = (
     settings.sampleSize > 0
       ? String(settings.sampleSize)
       : t('monitoring.server_codex_inspection_sample_all');
+  const targetTypes = normalizeCodexInspectionTargetTypes(
+    settings.targetTypes,
+    settings.targetType
+  );
+  const targetLabel =
+    targetTypes.length > 1
+      ? t('monitoring.codex_inspection_target_codex_xai')
+      : targetTypes[0] === 'xai'
+        ? t('monitoring.codex_inspection_target_xai')
+        : t('monitoring.codex_inspection_target_codex');
+  const providerItems: ConfigOverviewItem[] = [
+    {
+      key: 'target',
+      label: t('monitoring.codex_inspection_target_type'),
+      value: targetLabel,
+      field: 'targetTypes',
+    },
+  ];
+  if (targetTypes.includes('xai')) {
+    providerItems.push(
+      {
+        key: 'xai-model',
+        label: t('monitoring.codex_inspection_settings_xai_model_label'),
+        value: settings.xaiInferenceModel,
+        field: 'xaiInferenceModel',
+        display: 'wide',
+      },
+      {
+        key: 'xai-prompt',
+        label: t('monitoring.codex_inspection_settings_xai_prompt_label'),
+        value: settings.xaiInferencePrompt,
+        field: 'xaiInferencePrompt',
+        display: 'long-text',
+      }
+    );
+  }
 
   if (options.mode === 'server') {
     return [
@@ -711,6 +825,7 @@ export const buildConfigOverviewItems = (
         tone: settings.autoRecoverEnabled ? 'good' : 'idle',
         field: 'autoActionMode',
       },
+      ...providerItems,
     ];
   }
 
@@ -748,11 +863,6 @@ export const buildConfigOverviewItems = (
       hint: `${t('monitoring.codex_inspection_settings_timeout_label')}: ${settings.timeout}`,
       field: 'workers',
     },
-    {
-      key: 'target',
-      label: t('monitoring.codex_inspection_target_type'),
-      value: settings.targetType,
-      field: 'targetType',
-    },
+    ...providerItems,
   ];
 };

@@ -15,7 +15,9 @@ import {
   type CodexInspectionPaginationState,
   formatActionLabel,
   formatCurrentStateLabel,
+  getXaiInferenceState,
   summarizeInspectionError,
+  summarizeXaiInference,
   type ActionFilter,
   type HandlingFilter,
 } from '@/features/monitoring/model/codexInspectionPresentation';
@@ -107,6 +109,62 @@ export function CodexInspectionResultsPanel({
       : manualActionCount > 0 && !reauthDeleteAvailable
         ? t('monitoring.codex_inspection_pending_reauth_count', { count: manualActionCount })
         : t('monitoring.codex_inspection_no_executable_actions');
+  const inferenceSummary = summarizeXaiInference(result?.results ?? []);
+  const inferenceTone =
+    inferenceSummary.attempted === 0
+      ? 'idle'
+      : inferenceSummary.failed === 0
+        ? 'good'
+        : inferenceSummary.succeeded === 0
+          ? 'bad'
+          : 'warn';
+
+  const renderOperationForItem = (item: CodexInspectionResultItem) =>
+    renderOperation?.(item) ??
+    (isExecutableAction(item) ? (
+      <Button
+        size="sm"
+        variant={item.action === 'delete' ? 'danger' : 'secondary'}
+        onClick={() => onExecuteSingle(item)}
+        disabled={isInspectionInFlight || executing}
+      >
+        {formatActionLabel(item.action, t)}
+      </Button>
+    ) : item.action === 'reauth' ? (
+      <div className={styles.resultsHeaderActions}>
+        {onReauthAccount ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => onReauthAccount(item)}
+            disabled={isInspectionInFlight || executing}
+          >
+            <IconRefreshCw size={14} />
+            {t(item.provider === 'xai' ? 'auth_login.xai_oauth_button' : 'codex_reauth.button')}
+          </Button>
+        ) : (
+          <span className={styles.primaryReason}>
+            {t('monitoring.codex_inspection_manual_required')}
+          </span>
+        )}
+        {onDeleteReauthSingle ? (
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => onDeleteReauthSingle(item)}
+            disabled={isInspectionInFlight || executing}
+          >
+            <IconTrash2 size={14} />
+            {t('monitoring.codex_inspection_action_delete')}
+          </Button>
+        ) : null}
+      </div>
+    ) : (
+      <span className={styles.primaryReason}>{t('monitoring.codex_inspection_no_action')}</span>
+    ));
+
+  const inferenceStateLabel = (item: CodexInspectionResultItem) =>
+    t(`monitoring.codex_inspection_inference_state_${getXaiInferenceState(item)}`);
 
   return (
     <Panel
@@ -141,6 +199,42 @@ export function CodexInspectionResultsPanel({
     >
       {result ? (
         <>
+          {inferenceSummary.total > 0 ? (
+            <section
+              className={`${styles.inferenceSummary} ${styles[`tone-${inferenceTone}`]}`}
+              aria-label={t('monitoring.codex_inspection_inference_summary_title')}
+            >
+              <div className={styles.inferenceSummaryPrimary}>
+                <span>{t('monitoring.codex_inspection_inference_summary_title')}</span>
+                <strong>
+                  {inferenceSummary.successRate === null
+                    ? '--'
+                    : `${Math.round(inferenceSummary.successRate)}%`}
+                </strong>
+                <small>
+                  {t('monitoring.codex_inspection_inference_attempted_total', {
+                    attempted: inferenceSummary.attempted,
+                    total: inferenceSummary.total,
+                  })}
+                </small>
+              </div>
+              <div className={styles.inferenceSummaryStats}>
+                <span>
+                  {t('monitoring.codex_inspection_inference_success')}
+                  <strong>{inferenceSummary.succeeded}</strong>
+                </span>
+                <span>
+                  {t('monitoring.codex_inspection_inference_failed')}
+                  <strong>{inferenceSummary.failed}</strong>
+                </span>
+                <span>
+                  {t('monitoring.codex_inspection_inference_skipped')}
+                  <strong>{inferenceSummary.skipped}</strong>
+                </span>
+              </div>
+            </section>
+          ) : null}
+
           <div className={styles.filterRow}>
             <div
               className={styles.segmentedGroup}
@@ -201,6 +295,7 @@ export function CodexInspectionResultsPanel({
             <table className={styles.table}>
               <colgroup>
                 <col className={styles.accountColumn} />
+                <col className={styles.providerColumn} />
                 <col className={styles.stateColumn} />
                 <col className={styles.httpColumn} />
                 <col className={styles.usageColumn} />
@@ -210,6 +305,7 @@ export function CodexInspectionResultsPanel({
               <thead>
                 <tr>
                   <th>{t('monitoring.account_label')}</th>
+                  <th>{t('monitoring.codex_inspection_credential_provider')}</th>
                   <th>{stateHeaderLabel ?? t('monitoring.codex_inspection_current_state')}</th>
                   <th>{t('monitoring.codex_inspection_http_status')}</th>
                   <th>{t('monitoring.codex_inspection_used_percent')}</th>
@@ -224,7 +320,7 @@ export function CodexInspectionResultsPanel({
                     const quotaWindows = item.quotaWindows ?? [];
                     const errorText = item.errorDetail || item.error;
                     const errorSummary = summarizeInspectionError(item, t);
-                    const operation = renderOperation?.(item);
+                    const operation = renderOperationForItem(item);
 
                     return (
                       <tr key={item.key}>
@@ -265,6 +361,13 @@ export function CodexInspectionResultsPanel({
                           </div>
                         </td>
                         <td>
+                          <span className={styles.planBadge}>
+                            {item.provider.trim().toLowerCase() === 'xai'
+                              ? t('monitoring.codex_inspection_target_xai')
+                              : t('monitoring.codex_inspection_target_codex')}
+                          </span>
+                        </td>
+                        <td>
                           <span
                             className={`${styles.stateChip} ${
                               item.disabled ? styles.stateDisabled : styles.stateEnabled
@@ -288,62 +391,13 @@ export function CodexInspectionResultsPanel({
                             {formatActionLabel(item.action, t)}
                           </span>
                         </td>
-                        <td>
-                          {operation ??
-                            (isExecutableAction(item) ? (
-                              <Button
-                                size="sm"
-                                variant={item.action === 'delete' ? 'danger' : 'secondary'}
-                                onClick={() => onExecuteSingle(item)}
-                                disabled={isInspectionInFlight || executing}
-                              >
-                                {formatActionLabel(item.action, t)}
-                              </Button>
-                            ) : item.action === 'reauth' ? (
-                              <div className={styles.resultsHeaderActions}>
-                                {onReauthAccount ? (
-                                  <Button
-                                    size="sm"
-                                    variant="secondary"
-                                    onClick={() => onReauthAccount(item)}
-                                    disabled={isInspectionInFlight || executing}
-                                  >
-                                    <IconRefreshCw size={14} />
-                                    {t(
-                                      item.provider === 'xai'
-                                        ? 'auth_login.xai_oauth_button'
-                                        : 'codex_reauth.button'
-                                    )}
-                                  </Button>
-                                ) : (
-                                  <span className={styles.primaryReason}>
-                                    {t('monitoring.codex_inspection_manual_required')}
-                                  </span>
-                                )}
-                                {onDeleteReauthSingle ? (
-                                  <Button
-                                    size="sm"
-                                    variant="danger"
-                                    onClick={() => onDeleteReauthSingle(item)}
-                                    disabled={isInspectionInFlight || executing}
-                                  >
-                                    <IconTrash2 size={14} />
-                                    {t('monitoring.codex_inspection_action_delete')}
-                                  </Button>
-                                ) : null}
-                              </div>
-                            ) : (
-                              <span className={styles.primaryReason}>
-                                {t('monitoring.codex_inspection_no_action')}
-                              </span>
-                            ))}
-                        </td>
+                        <td>{operation}</td>
                       </tr>
                     );
                   })
                 ) : (
                   <tr>
-                    <td colSpan={6}>
+                    <td colSpan={7}>
                       <div className={styles.emptyBlockSmall}>
                         {suggestedResults.length === 0
                           ? t('monitoring.codex_inspection_no_pending_actions')
@@ -354,6 +408,92 @@ export function CodexInspectionResultsPanel({
                 )}
               </tbody>
             </table>
+          </div>
+          <div className={styles.mobileResultsList}>
+            {filteredResults.length > 0 ? (
+              filteredResults.map((item) => {
+                const planLabel = getCodexPlanLabel(item.planType, t);
+                const quotaWindows = item.quotaWindows ?? [];
+                const errorText = item.errorDetail || item.error;
+                const errorSummary = summarizeInspectionError(item, t);
+                const isXai = item.provider.trim().toLowerCase() === 'xai';
+                return (
+                  <article key={item.key} className={styles.mobileResultCard}>
+                    <header className={styles.mobileResultHeader}>
+                      <div className={styles.primaryCell}>
+                        <strong className={styles.primaryAccount}>{item.displayAccount}</strong>
+                        <small className={styles.primaryFile}>
+                          {item.fileName}
+                          {item.authIndex ? ` \u00b7 #${item.authIndex}` : ''}
+                        </small>
+                      </div>
+                      <span className={styles.planBadge}>
+                        {isXai
+                          ? t('monitoring.codex_inspection_target_xai')
+                          : t('monitoring.codex_inspection_target_codex')}
+                      </span>
+                    </header>
+                    <div className={styles.mobileResultFacts}>
+                      <div>
+                        <span>
+                          {stateHeaderLabel ?? t('monitoring.codex_inspection_current_state')}
+                        </span>
+                        <strong>{formatCurrentStateLabel(item, t)}</strong>
+                      </div>
+                      <div>
+                        <span>{t('monitoring.codex_inspection_http_status')}</span>
+                        <strong>{item.statusCode === null ? '--' : item.statusCode}</strong>
+                      </div>
+                      {isXai ? (
+                        <div>
+                          <span>{t('monitoring.codex_inspection_inference_state')}</span>
+                          <strong>{inferenceStateLabel(item)}</strong>
+                        </div>
+                      ) : null}
+                      <div>
+                        <span>{t('monitoring.codex_inspection_next_action')}</span>
+                        <strong>{formatActionLabel(item.action, t)}</strong>
+                      </div>
+                    </div>
+                    {planLabel ? (
+                      <span className={styles.planBadge}>
+                        {t('codex_quota.plan_label')}: {planLabel}
+                      </span>
+                    ) : null}
+                    <CodexInspectionQuotaWindows
+                      windows={quotaWindows}
+                      fallbackUsedPercent={item.usedPercent}
+                      t={t}
+                    />
+                    {item.actionReason ? (
+                      <small className={styles.primaryReason}>{item.actionReason}</small>
+                    ) : null}
+                    {item.observedHeaderEvidence?.length ? (
+                      <small className={styles.primaryEvidence}>
+                        {t('monitoring.codex_inspection_observed_header_evidence')}:{' '}
+                        {item.observedHeaderEvidence.join(' · ')}
+                      </small>
+                    ) : null}
+                    {errorSummary ? (
+                      <small className={styles.primaryError}>{errorSummary}</small>
+                    ) : null}
+                    {errorText && errorText !== errorSummary ? (
+                      <details className={styles.rawDetail}>
+                        <summary>{t('monitoring.codex_inspection_raw_response')}</summary>
+                        <pre>{errorText}</pre>
+                      </details>
+                    ) : null}
+                    <footer className={styles.mobileResultActions}>
+                      {renderOperationForItem(item)}
+                    </footer>
+                  </article>
+                );
+              })
+            ) : (
+              <div className={styles.emptyBlockSmall}>
+                {t('monitoring.codex_inspection_no_pending_actions')}
+              </div>
+            )}
           </div>
           {pagination.totalPages > 1 ? (
             <div className={styles.resultPaginationBar}>

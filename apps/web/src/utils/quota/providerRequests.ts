@@ -42,6 +42,12 @@ import {
   KIMI_USAGE_URL,
   XAI_BILLING_MONTHLY_URL,
   XAI_BILLING_WEEKLY_URL,
+  XAI_CLI_CHAT_PROXY_BASE_URL,
+  XAI_GROK_CLIENT_VERSION,
+  DEFAULT_XAI_INSPECTION_MODEL,
+  DEFAULT_XAI_INSPECTION_PROMPT,
+  XAI_INFERENCE_USER_AGENT,
+  XAI_OFFICIAL_API_BASE_URL,
   XAI_OFFICIAL_API_ME_URL,
   XAI_REQUEST_HEADERS,
 } from './constants';
@@ -1100,6 +1106,90 @@ const buildXaiRequestHeaders = (file: AuthFileItem): Record<string, string> => {
   return headers;
 };
 
+const readXaiAuthString = (file: AuthFileItem, ...keys: string[]) => {
+  const metadata = toXaiRecord(file.metadata);
+  const attributes = toXaiRecord(file.attributes);
+  for (const record of [file, metadata, attributes]) {
+    if (!record) continue;
+    for (const key of keys) {
+      const value = normalizeStringValue(record[key]);
+      if (value) return value;
+    }
+  }
+  return '';
+};
+
+const readXaiAuthBoolean = (file: AuthFileItem, ...keys: string[]): boolean | null => {
+  const metadata = toXaiRecord(file.metadata);
+  const attributes = toXaiRecord(file.attributes);
+  for (const record of [file, metadata, attributes]) {
+    if (!record) continue;
+    for (const key of keys) {
+      const value = record[key];
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === 'true') return true;
+        if (normalized === 'false') return false;
+      }
+    }
+  }
+  return null;
+};
+
+const sameXaiBaseUrl = (left: string, right: string) =>
+  left.trim().replace(/\/+$/, '').toLowerCase() === right.trim().replace(/\/+$/, '').toLowerCase();
+
+const resolveXaiInferenceRequest = (file: AuthFileItem) => {
+  const configuredBaseUrl = readXaiAuthString(file, 'base_url', 'baseUrl').replace(/\/+$/, '');
+  const usingApi = readXaiAuthBoolean(file, 'using_api', 'usingApi');
+  const authKind = readXaiAuthString(file, 'auth_kind', 'authKind').toLowerCase();
+  const resolvedUsingApi = usingApi ?? authKind !== 'oauth';
+  const usesCliChatProxy =
+    !resolvedUsingApi &&
+    (!configuredBaseUrl || sameXaiBaseUrl(configuredBaseUrl, XAI_OFFICIAL_API_BASE_URL));
+  const baseUrl = usesCliChatProxy
+    ? XAI_CLI_CHAT_PROXY_BASE_URL
+    : configuredBaseUrl || XAI_OFFICIAL_API_BASE_URL;
+  const header: Record<string, string> = {
+    Authorization: 'Bearer $TOKEN$',
+    Accept: 'text/event-stream',
+    'Content-Type': 'application/json',
+  };
+  if (usesCliChatProxy || sameXaiBaseUrl(baseUrl, XAI_CLI_CHAT_PROXY_BASE_URL)) {
+    header['x-xai-token-auth'] = 'xai-grok-cli';
+    header['x-grok-client-version'] = XAI_GROK_CLIENT_VERSION;
+    header['User-Agent'] = XAI_INFERENCE_USER_AGENT;
+  }
+  const userId = resolveXaiUserId(file);
+  if (userId) header['x-userid'] = userId;
+  return { url: `${baseUrl}/responses`, header };
+};
+
+const hasXaiInferenceCompletion = (bodyText: string) => {
+  const isCompleted = (value: unknown) => {
+    const event = toXaiRecord(value);
+    if (!event || event.type !== 'response.completed') return false;
+    const response = toXaiRecord(event.response);
+    const status = normalizeStringValue(response?.status)?.toLowerCase();
+    return status === 'completed';
+  };
+  try {
+    if (isCompleted(JSON.parse(bodyText))) return true;
+  } catch {
+    // A streaming body is expected to contain individual SSE data frames.
+  }
+  return bodyText.split('\n').some((line) => {
+    const data = line.trim();
+    if (!data.startsWith('data:')) return false;
+    try {
+      return isCompleted(JSON.parse(data.slice('data:'.length).trim()));
+    } catch {
+      return false;
+    }
+  });
+};
+
 const requestXaiBilling = async (
   authIndex: string,
   url: string,
@@ -1258,6 +1348,79 @@ const resolveXaiProbeAuthIndex = (file: AuthFileItem, t: TFunction): string => {
     throw new Error(t('xai_quota.missing_auth_index'));
   }
   return authIndex;
+};
+
+export interface XaiInferenceProbeResult {
+  statusCode: number;
+}
+
+export interface XaiInferenceProbeOptions {
+  model?: string;
+  prompt?: string;
+}
+
+export const probeXaiInference = async (
+  file: AuthFileItem,
+  t: TFunction,
+  requestConfig?: AxiosRequestConfig,
+  options?: XaiInferenceProbeOptions
+): Promise<XaiInferenceProbeResult> => {
+  const authIndex = resolveXaiProbeAuthIndex(file, t);
+  const { url, header } = resolveXaiInferenceRequest(file);
+  const result = await apiCallApi.request(
+    {
+      authIndex,
+      method: 'POST',
+      url,
+      header,
+      data: JSON.stringify({
+        model: normalizeStringValue(options?.model) || DEFAULT_XAI_INSPECTION_MODEL,
+        input: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_text',
+                text: normalizeStringValue(options?.prompt) || DEFAULT_XAI_INSPECTION_PROMPT,
+              },
+            ],
+          },
+        ],
+        stream: true,
+      }),
+    },
+    requestConfig
+  );
+  const envelope = parseXaiErrorEnvelope({
+    statusCode: result.hasStatusCode ? result.statusCode : null,
+    body: result.body,
+    bodyText: result.bodyText,
+    headers: result.header,
+  });
+  if (!result.hasStatusCode) {
+    const decision = {
+      ...classifyXaiProbe({ surface: 'inference', envelope, hasPayload: false }),
+      classification: 'protocol_changed' as const,
+      suggestedAction: 'keep' as const,
+      reasonCode: 'xai_protocol_changed',
+      confidence: 'verified' as const,
+      needsReview: true,
+    };
+    throw new XaiProbeError('xAI inference response missing status_code', envelope, decision);
+  }
+  if (result.statusCode < 200 || result.statusCode >= 300) {
+    const decision = classifyXaiProbe({ surface: 'inference', envelope });
+    throw new XaiProbeError(getApiCallErrorMessage(result), envelope, decision);
+  }
+  if (!hasXaiInferenceCompletion(result.bodyText)) {
+    const decision = classifyXaiProbe({ surface: 'inference', envelope, hasPayload: false });
+    throw new XaiProbeError(
+      'xAI inference did not return a completed response event',
+      envelope,
+      decision
+    );
+  }
+  return { statusCode: result.statusCode };
 };
 
 const requestXaiBillingProbe = async (

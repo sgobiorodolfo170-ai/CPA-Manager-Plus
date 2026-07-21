@@ -1,8 +1,8 @@
 import type { TFunction } from 'i18next';
 import type { XaiBillingSummary } from '@/types';
-import { probeXaiQuota } from '@/utils/quota/providerRequests';
+import { probeXaiBilling, probeXaiInference } from '@/utils/quota/providerRequests';
 import { formatQuotaResetTime } from '@/utils/quota/formatters';
-import { XaiProbeError, classifyXaiProbe, parseXaiErrorEnvelope } from '@/utils/quota/xaiErrors';
+import { XaiProbeError } from '@/utils/quota/xaiErrors';
 import { formatXaiProbeIssue } from '@/utils/quota/xaiPresentation';
 import type {
   CodexInspectionAction,
@@ -105,17 +105,32 @@ const buildXaiQuotaWindows = (summary: XaiBillingSummary): CodexInspectionQuotaW
   return windows;
 };
 
-const withRetry = async <T>(retries: number, task: () => Promise<T>): Promise<T> => {
+const withRetry = async <T>(
+  retries: number,
+  task: () => Promise<T>,
+  shouldRetry: (error: unknown) => boolean = () => true
+): Promise<T> => {
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
       return await task();
     } catch (error) {
       lastError = error;
+      if (attempt === retries || !shouldRetry(error)) break;
     }
   }
   throw lastError;
 };
+
+const shouldRetryXaiInference = (error: unknown) =>
+  error instanceof XaiProbeError &&
+  [
+    'upstream_error',
+    'rate_limited',
+    'probe_invalid',
+    'model_unavailable',
+    'protocol_changed',
+  ].includes(error.decision.classification);
 
 const xaiActionReason = (classification: string, action: string, t: TFunction) => {
   switch (classification) {
@@ -187,101 +202,59 @@ export const inspectSingleXaiAccount = async (
     };
   }
 
+  const requestConfig = settings.timeout > 0 ? { timeout: settings.timeout } : undefined;
+  let billingSummary: XaiBillingSummary | null = null;
   try {
-    const probe = await withRetry(settings.retries, () =>
-      probeXaiQuota(
-        account.raw,
-        t,
-        settings.timeout > 0 ? { timeout: settings.timeout } : undefined
-      )
+    const billing = await withRetry(
+      settings.retries,
+      () => probeXaiBilling(account.raw, t, requestConfig),
+      () => true
     );
-    if (probe.source === 'official-api') {
-      const actionReason =
-        account.disabled && !account.autoRecoverOwned
-          ? t('monitoring.xai_inspection_reason_official_api_manual_disable')
-          : t('monitoring.xai_inspection_reason_official_api_healthy');
-      onLog?.(
-        'info',
-        t('monitoring.xai_inspection_log_official_api', {
-          account: account.displayAccount,
-          action: formatXaiInspectionAction('keep', t),
-        })
-      );
-      return {
-        ...account,
-        action: 'keep',
-        actionReason,
-        statusCode: 200,
-        usedPercent: null,
-        isQuota: false,
-        autoRecoverEligible: false,
-        error: '',
-        planType: 'xai',
-        quotaWindows: [],
-        errorKind: 'official_api_healthy',
-        errorDetail: '',
-      };
-    }
-    const blockingFailure = probe.failures.find(
-      (failure) =>
-        failure instanceof XaiProbeError &&
-        !['upstream_error', 'rate_limited', 'probe_invalid', 'model_unavailable'].includes(
-          failure.decision.classification
-        )
+    billingSummary = billing.summary;
+  } catch {
+    // Billing is supplementary quota evidence. A real inference remains the
+    // health authority even when the billing endpoints are unavailable.
+  }
+
+  try {
+    const inference = await withRetry(
+      settings.retries,
+      () =>
+        probeXaiInference(account.raw, t, requestConfig, {
+          model: settings.xaiInferenceModel,
+          prompt: settings.xaiInferencePrompt,
+        }),
+      shouldRetryXaiInference
     );
-    if (blockingFailure) throw blockingFailure;
-
-    const summary = probe.summary;
-    const usedPercent = resolveXaiUsedPercent(summary);
-    const healthyDecision = classifyXaiProbe({
-      surface: 'billing',
-      envelope: parseXaiErrorEnvelope({ statusCode: 200, body: { config: summary } }),
-      hasPayload: true,
-      disabled: account.disabled,
-      autoRecoverOwned: account.autoRecoverOwned && !probe.partial,
-    });
-
-    const action = healthyDecision.suggestedAction;
-    let actionReason = probe.partial
-      ? t('monitoring.xai_inspection_reason_billing_partial')
-      : t('monitoring.xai_inspection_reason_billing_healthy');
-    if (action === 'enable') {
-      actionReason = t('monitoring.xai_inspection_reason_enable_owned');
-    } else if (account.disabled && !account.autoRecoverOwned) {
-      actionReason = t('monitoring.xai_inspection_reason_manual_disable');
-    }
-
-    const level: CodexInspectionLogLevel =
-      action === 'disable' ? 'warning' : action === 'enable' ? 'success' : 'info';
-    const percentText = usedPercent === null ? '--' : `${usedPercent.toFixed(1)}%`;
+    const action = account.disabled && account.autoRecoverOwned ? 'enable' : 'keep';
+    const actionReason =
+      action === 'enable'
+        ? t('monitoring.xai_inspection_reason_enable_owned')
+        : account.disabled
+          ? t('monitoring.xai_inspection_reason_inference_manual_disable')
+          : t('monitoring.xai_inspection_reason_inference_healthy');
+    const usedPercent = billingSummary ? resolveXaiUsedPercent(billingSummary) : null;
     onLog?.(
-      level,
+      action === 'enable' ? 'success' : 'info',
       t('monitoring.xai_inspection_log_result', {
         account: account.displayAccount,
         action: formatXaiInspectionAction(action, t),
-        percent: percentText,
+        percent: usedPercent === null ? '--' : `${usedPercent.toFixed(1)}%`,
       })
     );
-
     return {
       ...account,
       action,
       actionReason,
-      statusCode: 200,
+      statusCode: inference.statusCode,
       usedPercent,
       isQuota: false,
-      autoRecoverEligible: action === 'enable' && account.autoRecoverOwned,
+      autoRecoverEligible: action === 'enable',
       error: '',
       planType: 'xai',
-      quotaWindows: buildXaiQuotaWindows(summary),
-      errorKind: probe.partial ? 'billing_partial' : 'billing_healthy',
-      errorDetail: probe.partial
-        ? truncateDetail(
-            probe.failures
-              .map((failure) => (failure instanceof Error ? failure.message : String(failure)))
-              .join(' · ')
-          )
-        : '',
+      quotaWindows: billingSummary ? buildXaiQuotaWindows(billingSummary) : [],
+      errorKind: 'inference_healthy',
+      errorDetail: '',
     };
   } catch (error) {
     if (error instanceof XaiProbeError) {
@@ -307,12 +280,12 @@ export const inspectSingleXaiAccount = async (
         action,
         actionReason: xaiActionReason(decision.classification, action, t),
         statusCode: envelope.statusCode,
-        usedPercent: null,
+        usedPercent: billingSummary ? resolveXaiUsedPercent(billingSummary) : null,
         isQuota: ['free_quota_exhausted', 'spending_limit'].includes(decision.classification),
         autoRecoverEligible: false,
         error: error.message,
         planType: 'xai',
-        quotaWindows: [],
+        quotaWindows: billingSummary ? buildXaiQuotaWindows(billingSummary) : [],
         errorKind: decision.classification,
         errorDetail: detail,
       };
@@ -332,12 +305,12 @@ export const inspectSingleXaiAccount = async (
       action: 'keep',
       actionReason: t('monitoring.xai_inspection_reason_request_error'),
       statusCode: null,
-      usedPercent: null,
+      usedPercent: billingSummary ? resolveXaiUsedPercent(billingSummary) : null,
       isQuota: false,
       autoRecoverEligible: false,
       error: message,
       planType: 'xai',
-      quotaWindows: [],
+      quotaWindows: billingSummary ? buildXaiQuotaWindows(billingSummary) : [],
       errorKind: 'request_error',
       errorDetail: truncateDetail(message),
     };

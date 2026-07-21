@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import type { TFunction } from 'i18next';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { IconCopy, IconInfo } from '@/components/ui/icons';
 import type { CodexInspectionAutoActionMode } from '@/features/monitoring/codexInspection';
 import { CodexInspectionAutoActionEditor } from '@/features/monitoring/components/CodexInspectionAutoActionEditor';
 import type {
@@ -8,6 +10,11 @@ import type {
   SharedInspectionConfigDraft,
   SharedInspectionConfigField,
 } from '@/features/monitoring/model/codexInspectionPresentation';
+import {
+  DEFAULT_XAI_INSPECTION_MODEL,
+  DEFAULT_XAI_INSPECTION_PROMPT,
+} from '@/utils/quota/constants';
+import { copyToClipboard } from '@/utils/clipboard';
 import styles from '../CodexInspectionPage.module.scss';
 
 type InspectionConfigFieldsProps = {
@@ -29,8 +36,113 @@ export function InspectionConfigFields({
   onAutoActionModeChange,
   onAutoRecoverEnabledChange,
 }: InspectionConfigFieldsProps) {
+  const [promptCopied, setPromptCopied] = useState(false);
+  const includesXai = draft.targetTypes.includes('xai');
+
+  const copyPrompt = async () => {
+    const copied = await copyToClipboard(draft.xaiInferencePrompt);
+    if (!copied) return;
+    setPromptCopied(true);
+    window.setTimeout(() => setPromptCopied(false), 1500);
+  };
+
   return (
     <>
+      <section className={styles.configSection}>
+        <header className={styles.configSectionHeader}>
+          <span>{t('monitoring.codex_inspection_settings_group_scope')}</span>
+        </header>
+        <div className={styles.serverConfigGrid}>
+          <div className={`${styles.serverField} ${styles.serverFieldWide}`}>
+            <div className="form-group">
+              <label className={styles.serverFieldLabel} htmlFor="targetTypes">
+                {t('monitoring.codex_inspection_settings_target_type_label')}
+              </label>
+              <Select
+                id="targetTypes"
+                value={draft.targetTypes}
+                options={[
+                  { value: 'codex', label: t('monitoring.codex_inspection_target_codex') },
+                  { value: 'xai', label: t('monitoring.codex_inspection_target_xai') },
+                  {
+                    value: 'codex+xai',
+                    label: t('monitoring.codex_inspection_target_codex_xai'),
+                  },
+                ]}
+                onChange={(value) => onFieldChange('targetTypes', value)}
+                ariaLabel={t('monitoring.codex_inspection_settings_target_type_label')}
+              />
+              <div className="hint">
+                {t('monitoring.codex_inspection_settings_target_type_hint')}
+              </div>
+              {errors.targetTypes ? <div className="error-box">{errors.targetTypes}</div> : null}
+            </div>
+          </div>
+          {includesXai ? (
+            <>
+              <div className={`${styles.xaiInferenceNotice} ${styles.serverFieldWide}`}>
+                <IconInfo size={17} aria-hidden="true" />
+                <span>{t('monitoring.codex_inspection_settings_xai_inference_notice')}</span>
+              </div>
+              <div className={`${styles.serverField} ${styles.serverFieldWide}`}>
+                <Input
+                  id="xaiInferenceModel"
+                  list="xaiInspectionRecommendedModels"
+                  label={t('monitoring.codex_inspection_settings_xai_model_label')}
+                  error={errors.xaiInferenceModel}
+                  value={draft.xaiInferenceModel}
+                  onChange={(event) => onFieldChange('xaiInferenceModel', event.target.value)}
+                  hint={t('monitoring.codex_inspection_settings_xai_model_hint')}
+                />
+                <datalist id="xaiInspectionRecommendedModels">
+                  <option value={DEFAULT_XAI_INSPECTION_MODEL} />
+                </datalist>
+              </div>
+              <div className={`${styles.serverField} ${styles.serverFieldWide}`}>
+                <div className={styles.promptFieldHeader}>
+                  <label className={styles.serverFieldLabel} htmlFor="xaiInferencePrompt">
+                    {t('monitoring.codex_inspection_settings_xai_prompt_label')}
+                  </label>
+                  <div className={styles.promptFieldActions}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onFieldChange('xaiInferencePrompt', DEFAULT_XAI_INSPECTION_PROMPT)
+                      }
+                    >
+                      {t('monitoring.codex_inspection_settings_restore_default_prompt')}
+                    </button>
+                    <button type="button" onClick={() => void copyPrompt()}>
+                      <IconCopy size={13} aria-hidden="true" />
+                      {promptCopied
+                        ? t('common.copied')
+                        : t('monitoring.codex_inspection_settings_copy_prompt')}
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  id="xaiInferencePrompt"
+                  className="input"
+                  rows={4}
+                  value={draft.xaiInferencePrompt}
+                  onChange={(event) => onFieldChange('xaiInferencePrompt', event.target.value)}
+                />
+                <div className={styles.promptFieldMeta}>
+                  <span>{t('monitoring.codex_inspection_settings_xai_prompt_hint')}</span>
+                  <span>
+                    {draft.xaiInferencePrompt.length}{' '}
+                    {t('monitoring.codex_inspection_settings_prompt_characters')}
+                  </span>
+                </div>
+                {errors.xaiInferencePrompt ? (
+                  <div className="error-box">{errors.xaiInferencePrompt}</div>
+                ) : null}
+              </div>
+            </>
+          ) : null}
+        </div>
+      </section>
+
       <section className={styles.configSection}>
         <header className={styles.configSectionHeader}>
           <span>{t('monitoring.codex_inspection_settings_group_strategy')}</span>
@@ -89,31 +201,6 @@ export function InspectionConfigFields({
           </span>
         </summary>
         <div className={styles.advancedBody}>
-          <div className={styles.serverField}>
-            <div className="form-group">
-              <label className={styles.serverFieldLabel} htmlFor="targetType">
-                {t('monitoring.codex_inspection_settings_target_type_label')}
-              </label>
-              <Select
-                id="targetType"
-                value={draft.targetType}
-                options={[
-                  {
-                    value: 'codex',
-                    label: t('monitoring.codex_inspection_target_codex'),
-                  },
-                  {
-                    value: 'xai',
-                    label: t('monitoring.codex_inspection_target_xai'),
-                  },
-                ]}
-                onChange={(value) => onFieldChange('targetType', value)}
-                ariaLabel={t('monitoring.codex_inspection_settings_target_type_label')}
-              />
-              <div className="hint">{t('monitoring.codex_inspection_settings_target_type_hint')}</div>
-              {errors.targetType ? <div className="error-box">{errors.targetType}</div> : null}
-            </div>
-          </div>
           <div className={styles.serverField}>
             <Input
               id="workers"

@@ -151,7 +151,9 @@ export function CodexInspectionStatusPanel({
             </div>
             <div className={styles.progressMeta}>
               <span>{progressLabel}</span>
-              {runStatus === 'paused' ? <strong>{t('monitoring.codex_inspection_paused')}</strong> : null}
+              {runStatus === 'paused' ? (
+                <strong>{t('monitoring.codex_inspection_paused')}</strong>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -160,6 +162,9 @@ export function CodexInspectionStatusPanel({
       <CodexInspectionConfigOverview
         title={configOverviewTitle}
         editLabel={configOverviewEditLabel}
+        interactionHint={t('monitoring.codex_inspection_config_overview_hint')}
+        copyLabel={t('monitoring.codex_inspection_settings_copy_prompt')}
+        copiedLabel={t('common.copied')}
         items={configOverviewItems}
         onEdit={onEditConfig}
       />

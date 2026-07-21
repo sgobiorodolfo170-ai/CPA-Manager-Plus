@@ -50,6 +50,11 @@ import {
   validateInspectionConfigDraft,
   validateInspectionConfigFields,
 } from '@/features/monitoring/model/codexInspectionPresentation';
+import {
+  DEFAULT_CODEX_INSPECTION_SETTINGS,
+  codexInspectionTargetTypesToSelection,
+  normalizeCodexInspectionTargetTypes,
+} from '@/features/monitoring/model/codexInspectionSettings';
 import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
 import {
   getUsageServiceErrorCode,
@@ -83,12 +88,14 @@ type ServerCodexInspectionDraft = {
   intervalMinutes: string;
   timePoints: string;
   timeZone: string;
-  targetType: string;
+  targetTypes: string;
   workers: string;
   deleteWorkers: string;
   timeout: string;
   retries: string;
   userAgent: string;
+  xaiInferenceModel: string;
+  xaiInferencePrompt: string;
   usedPercentThreshold: string;
   sampleSize: string;
   autoActionMode: string;
@@ -103,12 +110,15 @@ type NormalizedServerCodexInspectionConfig = {
     timePoints: string[];
     timeZone: string;
   };
+  targetTypes: string[];
   targetType: string;
   workers: number;
   deleteWorkers: number;
   timeout: number;
   retries: number;
   userAgent: string;
+  xaiInferenceModel: string;
+  xaiInferencePrompt: string;
   usedPercentThreshold: number;
   sampleSize: number;
   autoActionMode: string;
@@ -123,12 +133,15 @@ const DEFAULT_SERVER_CODEX_CONFIG: NormalizedServerCodexInspectionConfig = {
     timePoints: [],
     timeZone: '',
   },
+  targetTypes: ['codex'],
   targetType: 'codex',
   workers: 4,
   deleteWorkers: 4,
   timeout: 15000,
   retries: 0,
   userAgent: 'codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal',
+  xaiInferenceModel: DEFAULT_CODEX_INSPECTION_SETTINGS.xaiInferenceModel,
+  xaiInferencePrompt: DEFAULT_CODEX_INSPECTION_SETTINGS.xaiInferencePrompt,
   usedPercentThreshold: 100,
   sampleSize: 0,
   autoActionMode: 'none',
@@ -188,7 +201,20 @@ const resolveServerCodexConfig = (
           ? schedule.timeZone
           : DEFAULT_SERVER_CODEX_CONFIG.schedule.timeZone,
     },
-    targetType: config?.targetType || DEFAULT_SERVER_CODEX_CONFIG.targetType,
+    targetTypes: (() => {
+      const targetTypes = normalizeCodexInspectionTargetTypes(
+        config?.targetTypes,
+        config?.targetType
+      );
+      return targetTypes.length > 0 ? targetTypes : DEFAULT_SERVER_CODEX_CONFIG.targetTypes;
+    })(),
+    targetType: (() => {
+      const targetTypes = normalizeCodexInspectionTargetTypes(
+        config?.targetTypes,
+        config?.targetType
+      );
+      return targetTypes[0] ?? DEFAULT_SERVER_CODEX_CONFIG.targetType;
+    })(),
     workers:
       config?.workers && config.workers > 0 ? config.workers : DEFAULT_SERVER_CODEX_CONFIG.workers,
     deleteWorkers:
@@ -202,6 +228,9 @@ const resolveServerCodexConfig = (
         ? config.retries
         : DEFAULT_SERVER_CODEX_CONFIG.retries,
     userAgent: config?.userAgent || DEFAULT_SERVER_CODEX_CONFIG.userAgent,
+    xaiInferenceModel: config?.xaiInferenceModel || DEFAULT_SERVER_CODEX_CONFIG.xaiInferenceModel,
+    xaiInferencePrompt:
+      config?.xaiInferencePrompt || DEFAULT_SERVER_CODEX_CONFIG.xaiInferencePrompt,
     usedPercentThreshold:
       config?.usedPercentThreshold !== undefined
         ? config.usedPercentThreshold
@@ -224,12 +253,14 @@ const toDraft = (config?: ManagerCodexInspectionConfig | null): ServerCodexInspe
     intervalMinutes: String(resolved.schedule.intervalMinutes),
     timePoints: resolved.schedule.timePoints.join(', '),
     timeZone: resolved.schedule.timeZone,
-    targetType: resolved.targetType,
+    targetTypes: codexInspectionTargetTypesToSelection(resolved.targetTypes, resolved.targetType),
     workers: String(resolved.workers),
     deleteWorkers: String(resolved.deleteWorkers),
     timeout: String(resolved.timeout),
     retries: String(resolved.retries),
     userAgent: resolved.userAgent,
+    xaiInferenceModel: resolved.xaiInferenceModel,
+    xaiInferencePrompt: resolved.xaiInferencePrompt,
     usedPercentThreshold: String(resolved.usedPercentThreshold),
     sampleSize: String(resolved.sampleSize),
     autoActionMode: resolved.autoActionMode,
@@ -314,12 +345,15 @@ const createConfigFromDraft = (
             timePoints,
             timeZone: draft.timeZone.trim(),
           },
-    targetType: validation.values.targetType,
+    targetTypes: validation.values.targetTypes,
+    targetType: validation.values.targetTypes[0],
     workers: validation.values.workers,
     deleteWorkers: validation.values.deleteWorkers,
     timeout: validation.values.timeout,
     retries: validation.values.retries,
     userAgent: validation.values.userAgent,
+    xaiInferenceModel: validation.values.xaiInferenceModel,
+    xaiInferencePrompt: validation.values.xaiInferencePrompt,
     usedPercentThreshold: validation.values.usedPercentThreshold,
     sampleSize: validation.values.sampleSize,
     autoActionMode: validation.values.autoActionMode,
@@ -450,12 +484,14 @@ function getComparableConfig(config: NormalizedServerCodexInspectionConfig) {
     intervalMinutes: config.schedule.intervalMinutes,
     timePoints: normalizeTimePointList(config.schedule.timePoints),
     timeZone: (config.schedule.timeZone || '').trim(),
-    targetType: config.targetType.trim(),
+    targetTypes: normalizeCodexInspectionTargetTypes(config.targetTypes, config.targetType),
     workers: config.workers,
     deleteWorkers: config.deleteWorkers,
     timeout: config.timeout,
     retries: config.retries,
     userAgent: config.userAgent.trim(),
+    xaiInferenceModel: config.xaiInferenceModel.trim(),
+    xaiInferencePrompt: config.xaiInferencePrompt.trim(),
     usedPercentThreshold: config.usedPercentThreshold,
     sampleSize: config.sampleSize,
     autoActionMode: config.autoActionMode,
@@ -1194,18 +1230,21 @@ export function ServerCodexInspectionPage() {
     [executeServerActions, showConfirmation, t]
   );
 
-  const handleOpenCodexReauth = useCallback((item: CodexInspectionResult) => {
-    if (item.provider === 'xai') {
-      navigate('/oauth#oauth-provider-xai');
-      return;
-    }
-    setCodexReauthTarget({
-      account: item.displayAccount || item.accountId || item.fileName,
-      fileName: item.fileName,
-      authIndex: item.authIndex ?? null,
-      accountId: item.accountId ?? null,
-    });
-  }, [navigate]);
+  const handleOpenCodexReauth = useCallback(
+    (item: CodexInspectionResult) => {
+      if (item.provider === 'xai') {
+        navigate('/oauth#oauth-provider-xai');
+        return;
+      }
+      setCodexReauthTarget({
+        account: item.displayAccount || item.accountId || item.fileName,
+        fileName: item.fileName,
+        authIndex: item.authIndex ?? null,
+        accountId: item.accountId ?? null,
+      });
+    },
+    [navigate]
+  );
 
   const handleDeleteServerReauth = useCallback(
     (targets: CodexInspectionResult[], scope: 'single' | 'bulk') => {
@@ -1334,6 +1373,9 @@ export function ServerCodexInspectionPage() {
         <CodexInspectionConfigOverview
           title={t('monitoring.codex_inspection_config_overview_title')}
           editLabel={t('monitoring.codex_inspection_config_overview_edit')}
+          interactionHint={t('monitoring.codex_inspection_config_overview_hint')}
+          copyLabel={t('monitoring.codex_inspection_settings_copy_prompt')}
+          copiedLabel={t('common.copied')}
           ariaLabel={t('monitoring.server_codex_inspection_config_summary_title')}
           items={configOverviewItems}
           onEdit={openConfigDrawer}
@@ -1682,12 +1724,15 @@ export function ServerCodexInspectionPage() {
           settings: {
             baseUrl: serviceBase,
             token: '',
+            targetTypes: selectedConfig.targetTypes,
             targetType: selectedConfig.targetType,
             workers: selectedConfig.workers,
             deleteWorkers: selectedConfig.deleteWorkers,
             timeout: selectedConfig.timeout,
             retries: selectedConfig.retries,
             userAgent: selectedConfig.userAgent,
+            xaiInferenceModel: selectedConfig.xaiInferenceModel,
+            xaiInferencePrompt: selectedConfig.xaiInferencePrompt,
             usedPercentThreshold: selectedConfig.usedPercentThreshold,
             sampleSize: selectedConfig.sampleSize,
           },

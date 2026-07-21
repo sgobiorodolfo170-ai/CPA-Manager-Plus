@@ -7,6 +7,10 @@ import type {
 } from '@/features/monitoring/codexInspection';
 import type { Config } from '@/types';
 import { normalizeNumberValue } from '@/utils/quota';
+import {
+  DEFAULT_XAI_INSPECTION_MODEL,
+  DEFAULT_XAI_INSPECTION_PROMPT,
+} from '@/utils/quota/constants';
 
 export const CODEX_INSPECTION_SETTINGS_STORAGE_KEY = 'cli-proxy-codex-inspection-settings-v1';
 
@@ -17,13 +21,48 @@ export const CODEX_INSPECTION_AUTO_ACTION_MODES: readonly CodexInspectionAutoAct
   'delete',
 ];
 
+export const CODEX_INSPECTION_TARGET_TYPES = ['codex', 'xai'] as const;
+export type CodexInspectionTargetType = (typeof CODEX_INSPECTION_TARGET_TYPES)[number];
+
+export const normalizeCodexInspectionTargetTypes = (
+  value: unknown,
+  legacyTargetType?: unknown
+): CodexInspectionTargetType[] => {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(/[,+\s]+/)
+      : legacyTargetType === undefined
+        ? []
+        : [legacyTargetType];
+  const selected = new Set<CodexInspectionTargetType>();
+  values.forEach((entry) => {
+    const normalized = readString(entry).toLowerCase();
+    if (normalized === 'codex' || normalized === 'xai') {
+      selected.add(normalized);
+    }
+  });
+  return CODEX_INSPECTION_TARGET_TYPES.filter((target) => selected.has(target));
+};
+
+export const codexInspectionTargetTypesToSelection = (
+  value: unknown,
+  legacyTargetType?: unknown
+) => {
+  const targetTypes = normalizeCodexInspectionTargetTypes(value, legacyTargetType);
+  return (targetTypes.length > 0 ? targetTypes : ['codex']).join('+');
+};
+
 export const DEFAULT_CODEX_INSPECTION_SETTINGS: CodexInspectionConfigurableSettings = {
+  targetTypes: ['codex'],
   targetType: 'codex',
   workers: 4,
   deleteWorkers: 4,
   timeout: 15000,
   retries: 0,
   userAgent: 'codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal',
+  xaiInferenceModel: DEFAULT_XAI_INSPECTION_MODEL,
+  xaiInferencePrompt: DEFAULT_XAI_INSPECTION_PROMPT,
   usedPercentThreshold: 100,
   sampleSize: 0,
   autoActionMode: 'none',
@@ -130,12 +169,18 @@ export const readConfigurableSettingsFromConfig = (
   const clean = config?.clean ?? null;
   const cleanRecord = isRecord(clean) ? clean : {};
   return {
+    targetTypes: normalizeCodexInspectionTargetTypes(
+      cleanRecord.targetTypes ?? cleanRecord.target_types ?? cleanRecord['target-types'],
+      clean?.targetType
+    ),
     targetType: readString(clean?.targetType),
     workers: normalizeNumberValue(clean?.workers) ?? undefined,
     deleteWorkers: normalizeNumberValue(clean?.deleteWorkers) ?? undefined,
     timeout: normalizeNumberValue(clean?.timeout) ?? undefined,
     retries: normalizeNumberValue(clean?.retries) ?? undefined,
     userAgent: readString(clean?.userAgent),
+    xaiInferenceModel: readString(clean?.xaiInferenceModel),
+    xaiInferencePrompt: readString(clean?.xaiInferencePrompt),
     usedPercentThreshold: normalizeNumberValue(clean?.usedPercentThreshold) ?? undefined,
     sampleSize: normalizeNumberValue(clean?.sampleSize) ?? undefined,
     autoActionMode:
@@ -147,12 +192,15 @@ export const readConfigurableSettingsFromConfig = (
 };
 
 type CodexInspectionConfigurableSettingsInput = {
+  targetTypes?: unknown;
   targetType?: unknown;
   workers?: unknown;
   deleteWorkers?: unknown;
   timeout?: unknown;
   retries?: unknown;
   userAgent?: unknown;
+  xaiInferenceModel?: unknown;
+  xaiInferencePrompt?: unknown;
   usedPercentThreshold?: unknown;
   sampleSize?: unknown;
   autoExecuteActions?: unknown;
@@ -163,6 +211,7 @@ type CodexInspectionConfigurableSettingsInput = {
 export const normalizeConfigurableSettings = (
   input?: CodexInspectionConfigurableSettingsInput | null
 ): CodexInspectionConfigurableSettings => {
+  const targetTypes = normalizeCodexInspectionTargetTypes(input?.targetTypes, input?.targetType);
   const merged = {
     ...DEFAULT_CODEX_INSPECTION_SETTINGS,
     ...(input ?? {}),
@@ -173,8 +222,13 @@ export const normalizeConfigurableSettings = (
   const sampleSizeValue = normalizeNumberValue(merged.sampleSize);
 
   return {
+    targetTypes:
+      targetTypes.length > 0 ? targetTypes : [...DEFAULT_CODEX_INSPECTION_SETTINGS.targetTypes],
     targetType:
-      readString(merged.targetType).toLowerCase() || DEFAULT_CODEX_INSPECTION_SETTINGS.targetType,
+      (targetTypes.length > 0
+        ? targetTypes[0]
+        : DEFAULT_CODEX_INSPECTION_SETTINGS.targetTypes[0]) ??
+      DEFAULT_CODEX_INSPECTION_SETTINGS.targetType,
     workers: clampPositiveInteger(
       normalizeNumberValue(merged.workers) ?? undefined,
       DEFAULT_CODEX_INSPECTION_SETTINGS.workers
@@ -195,6 +249,10 @@ export const normalizeConfigurableSettings = (
         ? DEFAULT_CODEX_INSPECTION_SETTINGS.retries
         : Math.max(0, Math.floor(retriesValue)),
     userAgent: readString(merged.userAgent) || DEFAULT_CODEX_INSPECTION_SETTINGS.userAgent,
+    xaiInferenceModel:
+      readString(merged.xaiInferenceModel) || DEFAULT_CODEX_INSPECTION_SETTINGS.xaiInferenceModel,
+    xaiInferencePrompt:
+      readString(merged.xaiInferencePrompt) || DEFAULT_CODEX_INSPECTION_SETTINGS.xaiInferencePrompt,
     usedPercentThreshold: Number.isFinite(threshold)
       ? Math.max(0, Math.min(100, threshold))
       : DEFAULT_CODEX_INSPECTION_SETTINGS.usedPercentThreshold,

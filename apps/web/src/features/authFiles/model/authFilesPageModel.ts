@@ -656,6 +656,7 @@ export const getAuthFileCodexStatus = (
     isXai &&
     inspectionErrorKind &&
     inspectionErrorKind !== 'billing_healthy' &&
+    inspectionErrorKind !== 'inference_healthy' &&
     inspectionErrorKind !== 'official_api_healthy' &&
     !needsReauth
   ) {

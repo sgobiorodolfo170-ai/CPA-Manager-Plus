@@ -176,12 +176,15 @@ export interface ManagerCodexInspectionScheduleConfig {
 export interface ManagerCodexInspectionConfig {
   enabled?: boolean;
   schedule?: ManagerCodexInspectionScheduleConfig;
+  targetTypes?: string[];
   targetType?: string;
   workers?: number;
   deleteWorkers?: number;
   timeout?: number;
   retries?: number;
   userAgent?: string;
+  xaiInferenceModel?: string;
+  xaiInferencePrompt?: string;
   usedPercentThreshold?: number;
   sampleSize?: number;
   autoActionMode?: ManagerCodexInspectionAutoActionMode | string;

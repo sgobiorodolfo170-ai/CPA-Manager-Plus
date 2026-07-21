@@ -32,6 +32,12 @@ import {
   CODEX_USAGE_URL,
   XAI_BILLING_MONTHLY_URL,
   XAI_BILLING_WEEKLY_URL,
+  XAI_CLI_CHAT_PROXY_BASE_URL,
+  XAI_GROK_CLIENT_VERSION,
+  DEFAULT_XAI_INSPECTION_MODEL,
+  DEFAULT_XAI_INSPECTION_PROMPT,
+  XAI_INFERENCE_USER_AGENT,
+  XAI_OFFICIAL_API_BASE_URL,
   XAI_OFFICIAL_API_ME_URL,
 } from './constants';
 import { formatQuotaResetTime } from './formatters';
@@ -43,6 +49,7 @@ import {
   fetchCodexQuota,
   mergeXaiBillingSummaries,
   probeXaiBilling,
+  probeXaiInference,
 } from './providerRequests';
 import { XaiProbeError } from './xaiErrors';
 
@@ -2125,6 +2132,191 @@ describe('fetchXaiQuota', () => {
         },
       });
     }
+  });
+});
+
+describe('probeXaiInference', () => {
+  const completedEvent =
+    'data: {"type":"response.completed","response":{"status":"completed"}}\n\n';
+
+  it('sends a streamed real inference request through the OAuth CLI endpoint', async () => {
+    mocks.request.mockResolvedValue({
+      statusCode: 200,
+      hasStatusCode: true,
+      header: {},
+      bodyText: completedEvent,
+      body: completedEvent,
+    });
+
+    const result = await probeXaiInference(
+      {
+        name: 'xai-oauth.json',
+        type: 'xai',
+        authIndex: 'xai-oauth-1',
+        metadata: { auth_kind: 'oauth', user_id: 'user-123' },
+      },
+      t
+    );
+
+    expect(result).toEqual({ statusCode: 200 });
+    expect(mocks.request).toHaveBeenCalledTimes(1);
+    const request = mocks.request.mock.calls[0][0];
+    expect(request).toMatchObject({
+      authIndex: 'xai-oauth-1',
+      method: 'POST',
+      url: `${XAI_CLI_CHAT_PROXY_BASE_URL}/responses`,
+      header: {
+        Authorization: 'Bearer $TOKEN$',
+        Accept: 'text/event-stream',
+        'Content-Type': 'application/json',
+        'x-xai-token-auth': 'xai-grok-cli',
+        'x-grok-client-version': XAI_GROK_CLIENT_VERSION,
+        'User-Agent': XAI_INFERENCE_USER_AGENT,
+        'x-userid': 'user-123',
+      },
+    });
+    expect(JSON.parse(request.data)).toEqual({
+      model: DEFAULT_XAI_INSPECTION_MODEL,
+      input: [
+        {
+          role: 'user',
+          content: [{ type: 'input_text', text: DEFAULT_XAI_INSPECTION_PROMPT }],
+        },
+      ],
+      stream: true,
+    });
+  });
+
+  it('uses the official endpoint without CLI-only headers for API credentials', async () => {
+    mocks.request.mockResolvedValue({
+      statusCode: 200,
+      hasStatusCode: true,
+      header: {},
+      bodyText: completedEvent,
+      body: completedEvent,
+    });
+
+    await probeXaiInference(
+      {
+        name: 'xai-api.json',
+        type: 'xai',
+        authIndex: 'xai-api-1',
+        metadata: { auth_kind: 'api_key', using_api: true },
+      },
+      t
+    );
+
+    expect(mocks.request.mock.calls[0][0]).toMatchObject({
+      url: `${XAI_OFFICIAL_API_BASE_URL}/responses`,
+      header: {
+        Authorization: 'Bearer $TOKEN$',
+        Accept: 'text/event-stream',
+        'Content-Type': 'application/json',
+      },
+    });
+    expect(mocks.request.mock.calls[0][0].header).not.toHaveProperty('x-xai-token-auth');
+  });
+
+  it('uses the configured model and prompt in the real inference request', async () => {
+    mocks.request.mockResolvedValue({
+      statusCode: 200,
+      hasStatusCode: true,
+      header: {},
+      bodyText: completedEvent,
+      body: completedEvent,
+    });
+
+    await probeXaiInference({ name: 'xai.json', type: 'xai', authIndex: 'xai-1' }, t, undefined, {
+      model: 'grok-custom',
+      prompt: 'Return a short health response.',
+    });
+
+    expect(JSON.parse(mocks.request.mock.calls[0][0].data)).toMatchObject({
+      model: 'grok-custom',
+      input: [
+        {
+          content: [{ type: 'input_text', text: 'Return a short health response.' }],
+        },
+      ],
+    });
+  });
+
+  it('honors explicit using_api=false even when auth_kind is absent', async () => {
+    mocks.request.mockResolvedValue({
+      statusCode: 200,
+      hasStatusCode: true,
+      header: {},
+      bodyText: completedEvent,
+      body: completedEvent,
+    });
+
+    await probeXaiInference(
+      {
+        name: 'xai-explicit-cli.json',
+        type: 'xai',
+        authIndex: 'xai-explicit-cli-1',
+        metadata: { using_api: false, base_url: XAI_OFFICIAL_API_BASE_URL },
+      },
+      t
+    );
+
+    expect(mocks.request.mock.calls[0][0]).toMatchObject({
+      url: `${XAI_CLI_CHAT_PROXY_BASE_URL}/responses`,
+      header: { 'x-xai-token-auth': 'xai-grok-cli' },
+    });
+  });
+
+  it('rejects a proxy response without status_code as a protocol change', async () => {
+    mocks.request.mockResolvedValue({
+      statusCode: 0,
+      hasStatusCode: false,
+      header: {},
+      bodyText: completedEvent,
+      body: completedEvent,
+    });
+
+    await expect(
+      probeXaiInference({ name: 'xai.json', type: 'xai', authIndex: 'xai-1' }, t)
+    ).rejects.toMatchObject({ decision: { classification: 'protocol_changed' } });
+  });
+
+  it.each([
+    { statusCode: 401, body: { error: 'invalid credentials' }, classification: 'auth_invalid' },
+    {
+      statusCode: 402,
+      body: { error: 'Payment required' },
+      classification: 'quota_or_entitlement_unknown',
+    },
+    { statusCode: 429, body: { error: 'Too many requests' }, classification: 'rate_limited' },
+  ])(
+    'classifies an inference HTTP $statusCode response',
+    async ({ statusCode, body, classification }) => {
+      mocks.request.mockResolvedValue({
+        statusCode,
+        hasStatusCode: true,
+        header: {},
+        bodyText: JSON.stringify(body),
+        body,
+      });
+
+      await expect(
+        probeXaiInference({ name: 'xai.json', type: 'xai', authIndex: 'xai-1' }, t)
+      ).rejects.toMatchObject({ decision: { classification } });
+    }
+  );
+
+  it('rejects a completion event that does not confirm completed status', async () => {
+    mocks.request.mockResolvedValue({
+      statusCode: 200,
+      hasStatusCode: true,
+      header: {},
+      bodyText: 'data: {"type":"response.completed","response":{}}\n\n',
+      body: 'data: {"type":"response.completed","response":{}}\n\n',
+    });
+
+    await expect(
+      probeXaiInference({ name: 'xai.json', type: 'xai', authIndex: 'xai-1' }, t)
+    ).rejects.toMatchObject({ decision: { classification: 'protocol_changed' } });
   });
 });
 
