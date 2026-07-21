@@ -430,8 +430,9 @@ const demoAuthFiles: AuthFilesResponse = {
       type: 'xai',
       provider: 'xai',
       authIndex: 'xai-ops-01',
-      disabled: false,
-      status: 'healthy',
+      disabled: true,
+      status: 'cooldown',
+      statusMessage: 'Included free usage exhausted; automatic restore is scheduled',
       size: 3180,
       modified: now() - day,
       account_snapshot: 'oc0demo01@yijihwjw.com',
@@ -2505,83 +2506,224 @@ const buildMonitoringAnalytics = (
     },
   ];
 
-  const events: DemoMonitoringEventRow[] = Array.from({ length: 72 }, (_, index) => {
-    const profile = eventProfiles[index % eventProfiles.length];
-    const failed = index % 9 === 0 || index % 22 === 0;
-    const quotaFailure = failed && index % 2 === 0;
-    const uncachedInputTokens = 620 + ((index * 113) % 2600);
-    const outputTokens = 210 + ((index * 71) % 980);
-    const cachedTokens = index % 3 === 0 ? 180 + ((index * 17) % 520) : 0;
-    const inputTokens = uncachedInputTokens + cachedTokens;
-    const reasoningTokens = index % 4 === 0 ? 80 + ((index * 13) % 360) : 0;
-    const totalTokens = inputTokens + outputTokens + reasoningTokens;
-    const timestampMs = analyticsNow - (index * 5 + (index % 4)) * minute;
-    return {
-      request_id: `demo-request-${String(index + 1).padStart(3, '0')}`,
-      event_hash: `demo-event-${String(index + 1).padStart(3, '0')}`,
-      timestamp_ms: timestampMs,
-      model: profile.model,
-      endpoint: profile.endpoint,
-      method: 'POST',
-      path: profile.endpoint,
-      auth_index: profile.authIndex,
-      auth_file_snapshot: profile.authFile,
-      source: profile.source,
-      source_hash: profile.sourceHash,
-      api_key_hash: profile.apiKeyHash,
-      account_snapshot: profile.account,
-      auth_label_snapshot: profile.label,
-      auth_provider_snapshot: profile.provider,
-      auth_project_id_snapshot:
-        profile.provider === 'gemini' || profile.provider === 'vertex'
-          ? 'demo-gemini-prod'
+  const xaiFreeUsageRecoverAtMs = analyticsNow + day;
+  const xaiFreeUsageEvent: DemoMonitoringEventRow = {
+    request_id: 'demo-xai-free-usage-429',
+    event_hash: 'demo-event-xai-free-usage-exhausted',
+    timestamp_ms: analyticsNow - minute,
+    model: 'grok-4.5-build-free',
+    endpoint: '/v1/chat/completions',
+    method: 'POST',
+    path: '/v1/chat/completions',
+    auth_index: 'xai-ops-01',
+    auth_file_snapshot: 'xai-ops.json',
+    source: 'ops',
+    source_hash: 'src_xai_ops',
+    api_key_hash: 'hash_xai_ops',
+    account_snapshot: 'oc0demo01@yijihwjw.com',
+    auth_label_snapshot: 'xai',
+    auth_provider_snapshot: 'xai',
+    resolved_model: 'grok-4.5-build-free',
+    service_tier: 'standard',
+    executor_type: 'ops',
+    input_tokens: 1_284,
+    output_tokens: 0,
+    cached_tokens: 0,
+    cache_read_tokens: 0,
+    cache_creation_tokens: 0,
+    reasoning_tokens: 0,
+    total_tokens: 1_284,
+    latency_ms: 1_180,
+    ttft_ms: 0,
+    failed: true,
+    fail_status_code: 429,
+    fail_summary: 'Included free usage for grok-4.5-build-free is exhausted.',
+    header_error_kind: 'rate_limit',
+    header_error_code: 'subscription:free-usage-exhausted',
+    header_trace_id: 'demo-xai-free-usage-429',
+    response_metadata: {
+      errors: {
+        kind: 'rate_limit',
+        code: 'subscription:free-usage-exhausted',
+        should_retry: true,
+      },
+      trace: {
+        request_id: 'demo-xai-free-usage-429',
+        primary_trace_id: 'demo-xai-free-usage-429',
+      },
+      routing: {
+        server: 'cloudflare',
+        cf_cache_status: 'DYNAMIC',
+      },
+      response: {
+        content_type: 'application/json',
+        content_length: 297,
+      },
+      providers: {
+        cloudflare_ray: 'demo-xai-free-usage-LAX',
+        cloudflare_cache_status: 'DYNAMIC',
+      },
+      data_policy: {
+        retention_mode: 'zdr',
+        zero_retention: true,
+      },
+      provider_usage: {
+        provider: 'xai',
+        kind: 'included_free_usage',
+        state: 'exhausted',
+        code: 'subscription:free-usage-exhausted',
+        model: 'grok-4.5-build-free',
+        unit: 'tokens',
+        actual: 1_024_413,
+        limit: 1_000_000,
+        remaining: 0,
+        overage: 24_413,
+        window_kind: 'rolling_24h',
+        observed_at_ms: analyticsNow - minute,
+        recover_at_ms: xaiFreeUsageRecoverAtMs,
+        recover_at_estimated: true,
+        source: 'response_body',
+      },
+    },
+  };
+  const xaiSuccessfulRateLimitEvent: DemoMonitoringEventRow = {
+    request_id: 'demo-xai-rate-limit-success',
+    event_hash: 'demo-event-xai-rate-limit-success',
+    timestamp_ms: analyticsNow - 3 * minute,
+    model: 'grok-4.5',
+    endpoint: '/v1/chat/completions',
+    method: 'POST',
+    path: '/v1/chat/completions',
+    auth_index: 'xai-email-user-01',
+    auth_file_snapshot: 'xai-email-user.json',
+    source: 'ops',
+    source_hash: 'src_xai_email_user',
+    api_key_hash: 'hash_xai_email_user',
+    account_snapshot: 'oc1demo02@yijihwjw.com',
+    auth_label_snapshot: 'xai',
+    auth_provider_snapshot: 'xai',
+    resolved_model: 'grok-4.5',
+    service_tier: 'standard',
+    executor_type: 'ops',
+    input_tokens: 1_176,
+    output_tokens: 562,
+    cached_tokens: 0,
+    cache_read_tokens: 0,
+    cache_creation_tokens: 0,
+    reasoning_tokens: 0,
+    total_tokens: 1_738,
+    latency_ms: 924,
+    ttft_ms: 186,
+    failed: false,
+    header_trace_id: 'demo-xai-rate-limit-success',
+    response_metadata: {
+      errors: { should_retry: false },
+      trace: {
+        request_id: 'demo-xai-rate-limit-success',
+        primary_trace_id: 'demo-xai-rate-limit-success',
+      },
+      routing: {
+        server: 'cloudflare',
+        cf_cache_status: 'DYNAMIC',
+      },
+      response: {
+        content_type: 'application/json',
+        content_length: 948,
+      },
+      providers: {
+        cloudflare_ray: 'demo-xai-success-LAX',
+        cloudflare_cache_status: 'DYNAMIC',
+      },
+      rate_limit: {
+        requests: { limit: 21, remaining: 18 },
+      },
+      data_policy: {
+        retention_mode: 'zdr',
+        zero_retention: true,
+      },
+    },
+  };
+  const events: DemoMonitoringEventRow[] = [
+    xaiFreeUsageEvent,
+    xaiSuccessfulRateLimitEvent,
+    ...Array.from({ length: 72 }, (_, index) => {
+      const profile = eventProfiles[index % eventProfiles.length];
+      const failed = index % 9 === 0 || index % 22 === 0;
+      const quotaFailure = failed && index % 2 === 0;
+      const uncachedInputTokens = 620 + ((index * 113) % 2600);
+      const outputTokens = 210 + ((index * 71) % 980);
+      const cachedTokens = index % 3 === 0 ? 180 + ((index * 17) % 520) : 0;
+      const inputTokens = uncachedInputTokens + cachedTokens;
+      const reasoningTokens = index % 4 === 0 ? 80 + ((index * 13) % 360) : 0;
+      const totalTokens = inputTokens + outputTokens + reasoningTokens;
+      const timestampMs = analyticsNow - (index * 5 + (index % 4)) * minute;
+      return {
+        request_id: `demo-request-${String(index + 1).padStart(3, '0')}`,
+        event_hash: `demo-event-${String(index + 1).padStart(3, '0')}`,
+        timestamp_ms: timestampMs,
+        model: profile.model,
+        endpoint: profile.endpoint,
+        method: 'POST',
+        path: profile.endpoint,
+        auth_index: profile.authIndex,
+        auth_file_snapshot: profile.authFile,
+        source: profile.source,
+        source_hash: profile.sourceHash,
+        api_key_hash: profile.apiKeyHash,
+        account_snapshot: profile.account,
+        auth_label_snapshot: profile.label,
+        auth_provider_snapshot: profile.provider,
+        auth_project_id_snapshot:
+          profile.provider === 'gemini' || profile.provider === 'vertex'
+            ? 'demo-gemini-prod'
+            : undefined,
+        resolved_model: profile.model,
+        reasoning_effort: index % 4 === 0 ? 'medium' : undefined,
+        service_tier: index % 5 === 0 ? 'priority' : 'standard',
+        executor_type: profile.executor,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        cached_tokens: 0,
+        cache_read_tokens: Math.round(cachedTokens * 0.78),
+        cache_creation_tokens: Math.round(cachedTokens * 0.22),
+        reasoning_tokens: reasoningTokens,
+        total_tokens: totalTokens,
+        latency_ms: failed ? 2400 + ((index * 97) % 1800) : 780 + ((index * 83) % 1540),
+        ttft_ms: failed ? 820 + ((index * 23) % 360) : 180 + ((index * 19) % 420),
+        failed,
+        fail_status_code: failed ? (quotaFailure ? 429 : 503) : undefined,
+        fail_summary: failed
+          ? quotaFailure
+            ? 'Quota window reached'
+            : 'Upstream response timeout'
           : undefined,
-      resolved_model: profile.model,
-      reasoning_effort: index % 4 === 0 ? 'medium' : undefined,
-      service_tier: index % 5 === 0 ? 'priority' : 'standard',
-      executor_type: profile.executor,
-      input_tokens: inputTokens,
-      output_tokens: outputTokens,
-      cached_tokens: 0,
-      cache_read_tokens: Math.round(cachedTokens * 0.78),
-      cache_creation_tokens: Math.round(cachedTokens * 0.22),
-      reasoning_tokens: reasoningTokens,
-      total_tokens: totalTokens,
-      latency_ms: failed ? 2400 + ((index * 97) % 1800) : 780 + ((index * 83) % 1540),
-      ttft_ms: failed ? 820 + ((index * 23) % 360) : 180 + ((index * 19) % 420),
-      failed,
-      fail_status_code: failed ? (quotaFailure ? 429 : 503) : undefined,
-      fail_summary: failed
-        ? quotaFailure
-          ? 'Quota window reached'
-          : 'Upstream response timeout'
-        : undefined,
-      header_quota_recover_at_ms: quotaFailure ? analyticsNow + 68 * minute : undefined,
-      header_quota_used_percent: quotaFailure ? 94 + (index % 5) : undefined,
-      header_quota_plan_type: quotaFailure ? 'team' : undefined,
-      header_error_kind: failed ? (quotaFailure ? 'quota' : 'upstream') : undefined,
-      header_error_code: failed ? (quotaFailure ? 'rate_limit' : 'timeout') : undefined,
-      header_trace_id: failed ? `demo-trace-${String(index + 1).padStart(3, '0')}` : undefined,
-      response_metadata: failed
-        ? {
-            quota: quotaFailure
-              ? {
-                  plan_type: 'team',
-                  recover_at_ms: analyticsNow + 68 * minute,
-                  used_percent: 94 + (index % 5),
-                }
-              : undefined,
-            errors: {
-              kind: quotaFailure ? 'quota' : 'upstream',
-              code: quotaFailure ? 'rate_limit' : 'timeout',
-            },
-            trace: {
-              request_id: `demo-trace-${String(index + 1).padStart(3, '0')}`,
-            },
-          }
-        : undefined,
-    };
-  });
+        header_quota_recover_at_ms: quotaFailure ? analyticsNow + 68 * minute : undefined,
+        header_quota_used_percent: quotaFailure ? 94 + (index % 5) : undefined,
+        header_quota_plan_type: quotaFailure ? 'team' : undefined,
+        header_error_kind: failed ? (quotaFailure ? 'quota' : 'upstream') : undefined,
+        header_error_code: failed ? (quotaFailure ? 'rate_limit' : 'timeout') : undefined,
+        header_trace_id: failed ? `demo-trace-${String(index + 1).padStart(3, '0')}` : undefined,
+        response_metadata: failed
+          ? {
+              quota: quotaFailure
+                ? {
+                    plan_type: 'team',
+                    recover_at_ms: analyticsNow + 68 * minute,
+                    used_percent: 94 + (index % 5),
+                  }
+                : undefined,
+              errors: {
+                kind: quotaFailure ? 'quota' : 'upstream',
+                code: quotaFailure ? 'rate_limit' : 'timeout',
+              },
+              trace: {
+                request_id: `demo-trace-${String(index + 1).padStart(3, '0')}`,
+              },
+            }
+          : undefined,
+      };
+    }),
+  ];
 
   const recentFailures = events
     .filter((event) => event.failed)
@@ -3199,17 +3341,49 @@ export const getDemoAccountProcessingPolicy = (): AccountProcessingPolicy => ({
   },
 });
 
-export const getDemoQuotaCooldowns = (): QuotaCooldownInfo[] => [
-  {
-    authFileName: 'codex-fallback-02.json',
-    authIndex: 'codex-fallback-02',
-    provider: 'codex',
-    owner: 'Automation Pool',
-    recoverAtMs: now() + 68 * 60 * 1000,
-    disabledAtMs: now() - 18 * 60 * 1000,
-    createdAtMs: now() - 18 * 60 * 1000,
-  },
-];
+export const getDemoQuotaCooldowns = (): QuotaCooldownInfo[] => {
+  const xaiObservedAtMs = now() - 4 * minute;
+  const xaiRecoverAtMs = xaiObservedAtMs + day;
+  return [
+    {
+      authFileName: 'codex-fallback-02.json',
+      authIndex: 'codex-fallback-02',
+      provider: 'codex',
+      owner: 'Automation Pool',
+      recoverAtMs: now() + 68 * 60 * 1000,
+      disabledAtMs: now() - 18 * 60 * 1000,
+      createdAtMs: now() - 18 * 60 * 1000,
+    },
+    {
+      authFileName: 'xai-ops.json',
+      authIndex: 'xai-ops-01',
+      provider: 'xai',
+      owner: 'cpamp_xai_free_usage',
+      reasonCode: 'xai_free_usage_exhausted',
+      windowKind: 'rolling_24h',
+      recoverAtMs: xaiRecoverAtMs,
+      disabledAtMs: xaiObservedAtMs,
+      createdAtMs: xaiObservedAtMs,
+      evidence: {
+        provider: 'xai',
+        kind: 'included_free_usage',
+        state: 'exhausted',
+        code: 'subscription:free-usage-exhausted',
+        model: 'grok-4.5-build-free',
+        unit: 'tokens',
+        actual: 1_024_413,
+        limit: 1_000_000,
+        remaining: 0,
+        overage: 24_413,
+        window_kind: 'rolling_24h',
+        observed_at_ms: xaiObservedAtMs,
+        recover_at_ms: xaiRecoverAtMs,
+        recover_at_estimated: true,
+        source: 'response_body',
+      },
+    },
+  ];
+};
 
 export const getDemoHeaderSnapshots = (): UsageHeaderSnapshotsResponse => ({
   generated_at_ms: now(),
@@ -3244,6 +3418,102 @@ export const getDemoHeaderSnapshots = (): UsageHeaderSnapshotsResponse => ({
         },
         trace: {
           request_id: 'demo-trace-429',
+        },
+      },
+    },
+    {
+      event_hash: 'demo-event-xai-free-usage-exhausted',
+      timestamp_ms: now() - minute,
+      auth_file_snapshot: 'xai-ops.json',
+      auth_index: 'xai-ops-01',
+      account_snapshot: 'oc0demo01@yijihwjw.com',
+      auth_label_snapshot: 'xai',
+      auth_provider_snapshot: 'xai',
+      source: 'ops',
+      source_hash: 'src_xai_ops',
+      header_error_kind: 'rate_limit',
+      header_error_code: 'subscription:free-usage-exhausted',
+      header_trace_id: 'demo-xai-free-usage-429',
+      response_metadata: {
+        errors: {
+          kind: 'rate_limit',
+          code: 'subscription:free-usage-exhausted',
+          should_retry: true,
+        },
+        trace: {
+          request_id: 'demo-xai-free-usage-429',
+          primary_trace_id: 'demo-xai-free-usage-429',
+        },
+        routing: {
+          server: 'cloudflare',
+          cf_cache_status: 'DYNAMIC',
+        },
+        response: {
+          content_type: 'application/json',
+          content_length: 297,
+        },
+        providers: {
+          cloudflare_ray: 'demo-xai-free-usage-LAX',
+          cloudflare_cache_status: 'DYNAMIC',
+        },
+        data_policy: {
+          retention_mode: 'zdr',
+          zero_retention: true,
+        },
+        provider_usage: {
+          provider: 'xai',
+          kind: 'included_free_usage',
+          state: 'exhausted',
+          code: 'subscription:free-usage-exhausted',
+          model: 'grok-4.5-build-free',
+          unit: 'tokens',
+          actual: 1_024_413,
+          limit: 1_000_000,
+          remaining: 0,
+          overage: 24_413,
+          window_kind: 'rolling_24h',
+          observed_at_ms: now() - minute,
+          recover_at_ms: now() + day - minute,
+          recover_at_estimated: true,
+          source: 'response_body',
+        },
+      },
+    },
+    {
+      event_hash: 'demo-event-xai-rate-limit-success',
+      timestamp_ms: now() - 3 * minute,
+      auth_file_snapshot: 'xai-email-user.json',
+      auth_index: 'xai-email-user-01',
+      account_snapshot: 'oc1demo02@yijihwjw.com',
+      auth_label_snapshot: 'xai',
+      auth_provider_snapshot: 'xai',
+      source: 'ops',
+      source_hash: 'src_xai_email_user',
+      header_trace_id: 'demo-xai-rate-limit-success',
+      response_metadata: {
+        errors: { should_retry: false },
+        trace: {
+          request_id: 'demo-xai-rate-limit-success',
+          primary_trace_id: 'demo-xai-rate-limit-success',
+        },
+        routing: {
+          server: 'cloudflare',
+          cf_cache_status: 'DYNAMIC',
+        },
+        response: {
+          content_type: 'application/json',
+          content_length: 948,
+        },
+        providers: {
+          cloudflare_ray: 'demo-xai-success-LAX',
+          cloudflare_cache_status: 'DYNAMIC',
+        },
+        rate_limit: {
+          requests: { limit: 21, remaining: 18 },
+        },
+        data_policy: {
+          retention_mode: 'zdr',
+          zero_retention: true,
         },
       },
     },

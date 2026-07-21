@@ -8,7 +8,9 @@ import {
   getDemoManagerLatestRelease,
   getDemoManagerConfig,
   getDemoMonitoringAnalytics,
+  getDemoHeaderSnapshots,
   getDemoPluginStore,
+  getDemoQuotaCooldowns,
   getDemoRawConfig,
 } from './demoFixtures';
 import {
@@ -211,6 +213,76 @@ describe('DemoPage', () => {
           point.bucket_ms === missingCodexBucket.bucket_ms
       )
     ).toBe(false);
+  });
+
+  it('provides xAI quota exhaustion, successful rate-limit, and cooldown fixtures for UI acceptance', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-21T10:25:05.000+08:00'));
+
+    const analytics = getDemoMonitoringAnalytics({
+      from_ms: 0,
+      to_ms: Date.now(),
+      include: { events_page: { limit: 10 } },
+    });
+    const exhausted = analytics.events?.items.find(
+      (event) => event.event_hash === 'demo-event-xai-free-usage-exhausted'
+    );
+    const successfulRateLimit = analytics.events?.items.find(
+      (event) => event.event_hash === 'demo-event-xai-rate-limit-success'
+    );
+    const xaiCooldown = getDemoQuotaCooldowns().find(
+      (cooldown) => cooldown.authFileName === 'xai-ops.json'
+    );
+    const xaiAuthFile = getDemoAuthFiles().files.find((file) => file.name === 'xai-ops.json');
+    const xaiSnapshots = getDemoHeaderSnapshots().items.filter((snapshot) =>
+      snapshot.event_hash.startsWith('demo-event-xai-')
+    );
+
+    expect(exhausted).toMatchObject({
+      failed: true,
+      fail_status_code: 429,
+      auth_file_snapshot: 'xai-ops.json',
+      auth_provider_snapshot: 'xai',
+      header_error_code: 'subscription:free-usage-exhausted',
+      response_metadata: {
+        errors: { should_retry: true },
+        provider_usage: {
+          provider: 'xai',
+          state: 'exhausted',
+          actual: 1_024_413,
+          limit: 1_000_000,
+          overage: 24_413,
+          window_kind: 'rolling_24h',
+          recover_at_estimated: true,
+        },
+        data_policy: { retention_mode: 'zdr', zero_retention: true },
+      },
+    });
+    expect(successfulRateLimit).toMatchObject({
+      failed: false,
+      auth_file_snapshot: 'xai-email-user.json',
+      response_metadata: {
+        rate_limit: { requests: { limit: 21, remaining: 18 } },
+        data_policy: { retention_mode: 'zdr', zero_retention: true },
+      },
+    });
+    expect(xaiCooldown).toMatchObject({
+      provider: 'xai',
+      owner: 'cpamp_xai_free_usage',
+      reasonCode: 'xai_free_usage_exhausted',
+      windowKind: 'rolling_24h',
+      evidence: {
+        actual: 1_024_413,
+        limit: 1_000_000,
+        recover_at_estimated: true,
+      },
+    });
+    expect(xaiCooldown?.evidence?.recover_at_ms).toBe(xaiCooldown?.recoverAtMs);
+    expect(xaiAuthFile).toMatchObject({ disabled: true, status: 'cooldown' });
+    expect(xaiSnapshots.map((snapshot) => snapshot.event_hash)).toEqual([
+      'demo-event-xai-free-usage-exhausted',
+      'demo-event-xai-rate-limit-success',
+    ]);
   });
 
   it('keeps visible demo dates relative to the current day', () => {

@@ -121,6 +121,7 @@ export interface QuotaCooldownInfo {
   recoverAtMs: number;
   disabledAtMs?: number;
   createdAtMs?: number;
+  evidence?: ProviderUsageMetadata;
 }
 
 export interface QuotaCooldownsResponse {
@@ -1079,6 +1080,7 @@ export interface ResponseHeaderErrorMetadata {
   retry_after_seconds?: number;
   retry_after_recover_at_ms?: number;
   rate_limit_bypass?: string;
+  should_retry?: boolean;
 }
 
 export interface ResponseHeaderTraceMetadata {
@@ -1091,6 +1093,7 @@ export interface ResponseHeaderTraceMetadata {
   cloud_ai_companion_trace_id?: string;
   client_request_id?: string;
   zeabur_request_id?: string;
+  traceparent?: string;
 }
 
 export interface ResponseHeaderRoutingMetadata {
@@ -1121,6 +1124,39 @@ export interface ResponseHeaderProviderMetadata {
   cloudflare_cache_status?: string;
 }
 
+export interface ResponseHeaderRateLimitBucket {
+  limit?: number;
+  remaining?: number;
+}
+
+export interface ResponseHeaderRateLimitMetadata {
+  requests?: ResponseHeaderRateLimitBucket;
+  tokens?: ResponseHeaderRateLimitBucket;
+}
+
+export interface ResponseHeaderDataPolicyMetadata {
+  retention_mode?: string;
+  zero_retention?: boolean;
+}
+
+export interface ProviderUsageMetadata {
+  provider?: string;
+  kind?: string;
+  state?: string;
+  code?: string;
+  model?: string;
+  unit?: string;
+  actual?: number;
+  limit?: number;
+  remaining?: number;
+  overage?: number;
+  window_kind?: string;
+  observed_at_ms?: number;
+  recover_at_ms?: number;
+  recover_at_estimated?: boolean;
+  source?: string;
+}
+
 export interface ResponseHeaderMetadata {
   quota?: ResponseHeaderQuotaMetadata;
   errors?: ResponseHeaderErrorMetadata;
@@ -1128,6 +1164,9 @@ export interface ResponseHeaderMetadata {
   routing?: ResponseHeaderRoutingMetadata;
   response?: ResponseHeaderResponseMetadata;
   providers?: ResponseHeaderProviderMetadata;
+  rate_limit?: ResponseHeaderRateLimitMetadata;
+  data_policy?: ResponseHeaderDataPolicyMetadata;
+  provider_usage?: ProviderUsageMetadata;
 }
 
 export interface UsageHeaderSnapshot {
